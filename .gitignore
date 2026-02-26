@@ -18,3 +18,10 @@ backend/uploads/
 *.zip
 backend/backend.zip
 *.zip
+
+# frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env
+frontend/.env.local
+frontend/.DS_Store
