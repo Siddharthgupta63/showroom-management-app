@@ -1,0 +1,281 @@
+📁 Recommended /docs folder structure
+/docs
+├─ AI_CONTEXT.md              (stable – rarely changes)
+├─ SYSTEM_SNAPSHOT.md         (versioned – “may be outdated”)
+├─ FRONTEND_MAP.md            (ownership map)
+├─ BACKEND_MAP.md             (ownership map)
+├─ DATABASE_SCHEMA.md         (tables + rules)
+├─ SQL_RULES.md               (safe SQL workflow)
+├─ CHAT_HANDOFF.md            (changes every chat)
+├─ STARTER_PROMPT.txt         (copy–paste to start chat)
+└─ CLOSING_SCRIPT.txt         (copy–paste to close chat)
+
+1️⃣ AI_CONTEXT.md (ALWAYS paste at start – stable)
+# AI_CONTEXT.md (Permanent Context)
+
+PROJECT NAME:
+Showroom DMS (Gupta Auto Agency)
+
+STACK:
+- Frontend: Next.js (App Router), React, TypeScript
+- Backend: Node.js + Express
+- Database: MySQL (showroom_db)
+- Auth: JWT + role + permission system
+
+CORE BUSINESS FLOW (HARD ORDER):
+Sale → Insurance → VAHAN → HSRP → RC → RTO → Renewals → Incentives
+
+GLOBAL RULES:
+1) sale_id is the master foreign key across all modules
+2) Sale creation is BLOCKED until:
+   - Contact exists
+   - Vehicle exists or is added after contact selection
+3) Owner/Admin-only:
+   - Bulk imports
+   - Old sales upload
+   - Overrides
+   - Settings & permissions
+4) UI permission ≠ security
+   → Backend must always enforce permissions
+
+ROLES:
+owner, admin, manager, sales, insurance, vahan, hsrp, rc, renewal
+
+LOGIN:
+- Username / Email / Mobile (configurable)
+- Password OR Password + OTP
+- OTP expiry configurable
+- OTP can be disabled by owner
+
+NON-NEGOTIABLE:
+- No destructive SQL without preview
+- No multi-file changes without stepwise validation
+- No relying only on frontend checks
+
+2️⃣ SYSTEM_SNAPSHOT.md (IMPORTANT: marked as possibly outdated)
+# SYSTEM_SNAPSHOT.md
+⚠️ NOTE:
+This file represents an EARLIER SNAPSHOT of the system.
+Some logic, tables, or flows MAY HAVE CHANGED after this snapshot.
+
+Use this for CONTEXT ONLY, not as source of truth.
+
+SNAPSHOT DATE:
+<YYYY-MM-DD>
+
+FRONTEND MODULES (snapshot):
+- Sales: app/sales/new, app/sales/create
+- Contacts: app/contacts, app/contacts/new, app/contacts/[id]
+- Insurance: app/insurance, app/insurance/renewals
+- RC / HSRP / VAHAN
+- Pipeline & Dashboard
+- Admin (users, permissions, role presets, vehicle catalog)
+
+BACKEND MODULES (snapshot):
+- salesController
+- contactsController
+- vehicleCatalogController
+- insuranceController + insuranceCombinedController
+- pipelineController
+- renewalController
+- rcController / hsrpController / vahanController
+
+KNOWN DESIGN DECISIONS (snapshot):
+- Sales upload-old route exists for owner/admin
+- Insurance expiry auto-calculated
+- Pipeline KPIs derived from status flags
+
+⚠️ Re-validate before modifying core logic.
+
+3️⃣ FRONTEND_MAP.md (exact ownership)
+# FRONTEND_MAP.md
+
+SALES:
+- New sale UI: frontend/app/sales/new/page.tsx
+- Create sale UI: frontend/app/sales/create/page.tsx
+- Sales list: frontend/app/sales/page.tsx
+
+CONTACTS:
+- List/search/import: frontend/app/contacts/page.tsx
+- Create contact: frontend/app/contacts/new/page.tsx
+- View/Edit contact: frontend/app/contacts/[id]/page.tsx
+
+INSURANCE:
+- Main screen: frontend/app/insurance/page.tsx
+- Renewals: frontend/app/insurance/renewals/page.tsx
+
+PIPELINE:
+- frontend/app/pipeline/page.tsx
+
+ADMIN:
+- Vehicle catalog: frontend/app/admin/vehicle-catalog/page.tsx
+- Permissions: frontend/app/admin/permissions/page.tsx
+- Role presets: frontend/app/admin/role-presets/page.tsx
+- Users: frontend/app/admin/users/page.tsx
+
+SHARED COMPONENTS:
+- Auth guard: frontend/components/AuthGuard.tsx
+- Session/idle: SessionGuardian.tsx, IdleLogoutClient.tsx
+- Owner import/export: OwnerImportExportButtons.tsx
+
+4️⃣ BACKEND_MAP.md
+# BACKEND_MAP.md
+
+ROUTES → CONTROLLERS
+
+sales.js → salesController.js
+contacts.js → contactsController.js
+vehicleCatalog.js → vehicleCatalogController.js
+insurance.js → insuranceController.js
+insuranceCombined.js → insuranceCombinedController.js
+pipeline.js → pipelineController.js
+renewal.js → renewalController.js
+rc.js → rcController.js
+hsrp.js → hsrpController.js
+vahan.js → vahanController.js
+admin.js → adminController.js
+auth.js → authController.js
+whatsappLogs.js → whatsappLogsController.js
+
+MIDDLEWARE:
+- authMiddleware.js (JWT)
+- permissionMiddleware.js (fine-grained permissions)
+- requireRole.js
+- excelUpload.js
+- upload.js
+
+5️⃣ DATABASE_SCHEMA.md
+# DATABASE_SCHEMA.md
+
+DATABASE: showroom_db
+
+CORE TABLE:
+sales (id)
+
+LINKED BY sale_id:
+- insurance
+- renewals
+- vahan
+- vahan_submission
+- hsrp
+- hsrp_fitment
+- rc
+- rc_status
+- incentives
+
+INSURANCE:
+- sale_id
+- insurance_type (new | renewal)
+- company
+- policy_number
+- cpa_included
+- cpa_number
+- premium_amount
+- start_date
+- expiry_date (INDEXED)
+- renewal_date
+
+RENEWALS:
+- sale_id
+- renewal_type (insurance | rc | both)
+- company
+- policy_number
+- invoice_number
+- premium_amount
+- renewal_date (INDEXED)
+
+USERS:
+- role ENUM
+- permissions via mapping table
+
+IMPORTANT:
+- expiry_date always derived from start_date (+365 days)
+
+6️⃣ SQL_RULES.md (safe SQL workflow)
+# SQL_RULES.md
+
+DEFAULT MODE: READ ONLY
+
+RULES:
+1) Always run SELECT preview
+2) Never UPDATE/DELETE without WHERE
+3) Prefer transactions
+4) Limit rows during testing
+5) Never touch prod blindly
+
+STANDARD FLOW:
+SELECT → VERIFY → UPDATE → VERIFY → COMMIT
+
+Example:
+START TRANSACTION;
+SELECT id FROM insurance WHERE expiry_date IS NULL LIMIT 10;
+UPDATE insurance SET expiry_date = DATE_ADD(start_date, INTERVAL 365 DAY)
+WHERE id IN (...);
+SELECT id, expiry_date FROM insurance WHERE id IN (...);
+COMMIT;
+
+7️⃣ CHAT_HANDOFF.md (changes every chat)
+# CHAT_HANDOFF.md
+
+LAST CHAT GOAL:
+-
+
+COMPLETED:
+-
+
+WORKING NOW:
+-
+
+CURRENT ISSUE:
+-
+
+FILES TOUCHED:
+-
+
+NEXT TASK (ONE ONLY):
+-
+
+8️⃣ STARTER_PROMPT.txt (ALWAYS use this)
+You are my coding assistant for Showroom DMS.
+
+Permanent context:
+[PASTE AI_CONTEXT.md]
+
+System snapshot (may be outdated):
+[PASTE SYSTEM_SNAPSHOT.md]
+
+Last chat handoff:
+[PASTE CHAT_HANDOFF.md]
+
+Task:
+<WRITE ONE CLEAR TASK>
+
+Rules:
+- Ask for max 2–3 files only if needed
+- Give ready-to-paste code
+- Preserve existing working logic
+
+9️⃣ CLOSING_SCRIPT.txt (MOST IMPORTANT)
+
+👉 Paste this before ending ANY chat
+
+Before we close this chat, do the following:
+
+1) Generate updated content for:
+   - CHAT_HANDOFF.md
+   - SYSTEM_SNAPSHOT.md (mark clearly what may be outdated)
+
+2) If any of these changed, list updates separately:
+   - FRONTEND_MAP.md
+   - BACKEND_MAP.md
+   - DATABASE_SCHEMA.md
+   - SQL_RULES.md
+
+3) Clearly state:
+   - What is confirmed stable
+   - What needs re-validation next time
+
+4) Output everything in COPY-PASTE-READY Markdown blocks
+   with correct filenames as headers.
+
+Do NOT include explanations outside the MD content.

@@ -1,0 +1,18 @@
+You are my coding assistant for Showroom DMS.
+
+Permanent context:
+[PASTE AI_CONTEXT.md]
+
+System snapshot (may be outdated):
+[PASTE SYSTEM_SNAPSHOT.md]
+
+Last chat handoff:
+[PASTE CHAT_HANDOFF.md]
+
+Task:
+<WRITE ONE CLEAR TASK>
+
+Rules:
+- Ask for  files if needed
+- Give ready-to-paste code
+- Preserve existing working logic

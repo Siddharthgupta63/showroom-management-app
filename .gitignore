@@ -1,0 +1,20 @@
+# dependencies / builds
+node_modules/
+.next/
+dist/
+build/
+
+# env
+.env
+.env.local
+
+# runtime uploads (don’t push)
+backend/uploads/
+
+# mac
+.DS_Store
+
+# archives
+*.zip
+backend/backend.zip
+*.zip
