@@ -54,10 +54,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (w.__authFetchWrapped) return;
     w.__authFetchWrapped = true;
 
-    const originalFetch: typeof fetch = w.fetch.bind(window);
+const originalFetch: typeof fetch = w.fetch.bind(window);
 
-    w.fetch = async (...args: any[]) => {
-      const resp: Response = await originalFetch(...args);
+w.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  const resp: Response = await originalFetch(input, init);
+
 
       if (resp.status === 401 || resp.status === 403) {
         try {
@@ -186,3 +187,5 @@ export function useAuth() {
   return context;
 }
 
+
+export const useAuthContext = useAuth;

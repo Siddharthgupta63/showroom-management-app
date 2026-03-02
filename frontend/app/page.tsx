@@ -1,13 +1,16 @@
-import { redirect } from "next/navigation";
-import { isLoggedIn } from "@/lib/auth";
+"use client";
 
-export default function Home() {
-  if (typeof window !== "undefined") {
-    if (isLoggedIn()) {
-      redirect("/dashboard");
-    } else {
-      redirect("/login");
-    }
-  }
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { getToken } from "@/lib/auth";
+
+export default function HomePage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const token = getToken();
+    router.replace(token ? "/dashboard" : "/login");
+  }, [router]);
+
   return null;
 }

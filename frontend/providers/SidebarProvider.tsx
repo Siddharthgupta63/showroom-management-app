@@ -1,14 +1,23 @@
 "use client";
 
-import { createContext, useState } from "react";
+import React, { createContext, useState, ReactNode } from "react";
 
-export const SidebarContext = createContext(null);
+type SidebarContextType = {
+  open: boolean;
+  toggle: () => void;
+};
 
-export default function SidebarProvider({ children }) {
-  const [open, setOpen] = useState(false);
+export const SidebarContext = createContext<SidebarContextType | null>(null);
+
+export default function SidebarProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState<boolean>(false);
 
   function toggle() {
-    setOpen(!open);
+    setOpen((prev) => !prev);
   }
 
   return (

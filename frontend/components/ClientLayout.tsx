@@ -1,5 +1,8 @@
 "use client";
 
+import React from "react";
+import { usePathname } from "next/navigation";
+
 import { AuthProvider } from "@/providers/AuthProvider";
 import Sidebar from "@/components/Sidebar";
 import SessionGuardian from "@/components/SessionGuardian";
@@ -11,21 +14,31 @@ export default function ClientLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+
+  // Pages where sidebar/layout should NOT appear
+  const noShell =
+    pathname === "/login" ||
+    pathname === "/" ||
+    pathname === "/_not-found";
+
   return (
     <AuthProvider>
-      {/* 1) If user disabled/password expired/token stale => interceptor redirects */}
-      {/* 2) Guardian pings backend so “disabled user” gets kicked even if idle */}
+      {/* Keep these global guards active */}
       <SessionGuardian />
-
-      {/* 3) Idle auto logout after 6 minutes */}
       <IdleLogoutClient minutes={6} />
-
-      {/* 4) popup messages (password expired/disabled/idle etc.) */}
       <PasswordPopup />
 
-      {/* App UI */}
-      <Sidebar />
-      <main className="flex-1 bg-gray-100 min-h-screen">{children}</main>
+      {noShell ? (
+        // Login (and root redirect) should be clean (no sidebar)
+        <main className="min-h-screen bg-gray-100">{children}</main>
+      ) : (
+        // App UI layout
+        <>
+          <Sidebar />
+          <main className="flex-1 bg-gray-100 min-h-screen">{children}</main>
+        </>
+      )}
     </AuthProvider>
   );
 }
