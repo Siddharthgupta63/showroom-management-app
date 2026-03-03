@@ -16,7 +16,6 @@ export default function ClientLayout({
 }) {
   const pathname = usePathname();
 
-  // Pages where sidebar/layout should NOT appear
   const noShell =
     pathname === "/login" ||
     pathname === "/" ||
@@ -24,20 +23,28 @@ export default function ClientLayout({
 
   return (
     <AuthProvider>
-      {/* Keep these global guards active */}
       <SessionGuardian />
       <IdleLogoutClient minutes={6} />
       <PasswordPopup />
 
       {noShell ? (
-        // Login (and root redirect) should be clean (no sidebar)
-        <main className="min-h-screen bg-gray-100">{children}</main>
+        <main className="min-h-screen bg-gray-100">
+          {children}
+        </main>
       ) : (
-        // App UI layout
-        <>
-          <Sidebar />
-          <main className="flex-1 bg-gray-100 min-h-screen">{children}</main>
-        </>
+        <div className="min-h-screen bg-gray-100">
+          {/* Desktop sidebar (fixed width 64) */}
+          <div className="hidden lg:block fixed left-0 top-0 h-screen w-64">
+            <Sidebar />
+          </div>
+
+          {/* Main content pushed right on desktop */}
+          <main className="min-h-screen lg:ml-64">
+            <div className="px-4 py-4 lg:px-6">
+              {children}
+            </div>
+          </main>
+        </div>
       )}
     </AuthProvider>
   );
