@@ -1,0 +1,20 @@
+Before we close this chat, do the following:
+
+1) Generate updated content for:
+   - CHAT_HANDOFF.md
+   - SYSTEM_SNAPSHOT.md (mark clearly what may be outdated)
+
+2) If any of these changed, list updates separately:
+   - FRONTEND_MAP.md
+   - BACKEND_MAP.md
+   - DATABASE_SCHEMA.md
+   - SQL_RULES.md
+
+3) Clearly state:
+   - What is confirmed stable
+   - What needs re-validation next time
+
+4) Output everything in COPY-PASTE-READY Markdown blocks
+   with correct filenames as headers.
+
+Do NOT include explanations outside the MD content.
