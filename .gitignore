@@ -25,3 +25,7 @@ frontend/.next/
 frontend/.env
 frontend/.env.local
 frontend/.DS_Store
+
+backend/.env.backup*
+backend/*.sql
+*.tsxk
