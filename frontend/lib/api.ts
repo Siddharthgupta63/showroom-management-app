@@ -1,18 +1,20 @@
-
 // frontend/lib/api.ts
 import axios from "axios";
 
-const baseURL =  "";
+const baseURL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  "";
 
 export const api = axios.create({ baseURL });
 
 function getToken() {
   if (typeof window === "undefined") return null;
-  // ✅ support both keys (so old + new code works)
+  // support both keys (old + new code)
   return localStorage.getItem("token") || localStorage.getItem("showroom_token");
 }
 
-// ✅ attach token to every request
+// attach token to every request
 api.interceptors.request.use((config) => {
   const token = getToken();
   if (token) {
@@ -64,4 +66,3 @@ api.interceptors.response.use(
 );
 
 export default api;
-

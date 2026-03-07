@@ -32,8 +32,9 @@ router.post("/", v.createVehicle);
 // NOTE: keep ALL "underscore" routes ABOVE any "/:id" routes
 // =====================================================
 
-router.post("/_duplicate/status", requireOwnerAdminManager, v.duplicateStatus);
-router.post("/_duplicate/status-bulk", requireOwnerAdminManager, v.duplicateStatusBulk);
+// ✅ changed: allow all authenticated staff
+router.post("/_duplicate/status", v.duplicateStatus);
+router.post("/_duplicate/status-bulk", v.duplicateStatusBulk);
 
 // =====================================================
 // OWNER / ADMIN ONLY
@@ -49,17 +50,17 @@ router.get("/_export", requireOwnerAdmin, v.exportVehiclesExcel);
 // =====================================================
 
 // Extract invoice (model/variant/color detect + duplicate preview)
+// ✅ changed: allow all authenticated staff
 router.post(
   "/_invoice/extract",
-  requireOwnerAdminManager,
   pdfUpload.single("file"),
   v.extractInvoicePdf
 );
 
 // ✅ Safe bulk create (duplicate-safe, no ER_DUP_ENTRY to UI)
+// ✅ changed: allow all authenticated staff
 router.post(
   "/_invoice/create-bulk",
-  requireOwnerAdminManager,
   v.createVehiclesFromInvoiceBulk
 );
 

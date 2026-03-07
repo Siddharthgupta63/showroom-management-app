@@ -186,11 +186,11 @@ exports.duplicateStatusBulk = async (req, res) => {
 // POST /api/purchases/from-invoice
 // Create purchase header + items + insert ONLY NEW vehicles
 // =====================================================
+// =====================================================
+// POST /api/purchases/from-invoice
+// Create purchase header + items + insert ONLY NEW vehicles
+// =====================================================
 exports.createPurchaseFromInvoice = async (req, res) => {
-  const role = String(req.user?.role || "").toLowerCase();
-  const isOwnerAdminManager = role === "owner" || role === "admin" || role === "manager";
-  if (!isOwnerAdminManager) return res.status(403).json({ success: false, message: "Only owner/admin/manager" });
-
   const conn = await db.getConnection();
   try {
     const schema = await getSchemaCached();
@@ -203,19 +203,25 @@ exports.createPurchaseFromInvoice = async (req, res) => {
 
     // IMPORTANT: support invoice_date + purchase_date
     const invoice_date = parseDateToYMD(body.invoice_date) || null;
-    const purchase_date = parseDateToYMD(body.purchase_date) || (body.purchase_date ? String(body.purchase_date).trim() : null);
+    const purchase_date =
+      parseDateToYMD(body.purchase_date) ||
+      (body.purchase_date ? String(body.purchase_date).trim() : null);
 
     const purchase_amount = getHeaderAmountValue(body.purchase_amount);
     const notes = body.notes ? String(body.notes) : null;
 
     // used when inserting new vehicles
     const contact_id =
-      body.contact_id != null && String(body.contact_id).trim() !== "" ? Number(body.contact_id) : null;
+      body.contact_id != null && String(body.contact_id).trim() !== ""
+        ? Number(body.contact_id)
+        : null;
 
     const vehicle_make = body.vehicle_make ? String(body.vehicle_make).trim() : "HERO BIKE";
     const invoice_file = body.invoice_file ? String(body.invoice_file).trim() : null;
 
-    if (!vehicles.length) return res.status(400).json({ success: false, message: "No vehicles provided" });
+    if (!vehicles.length) {
+      return res.status(400).json({ success: false, message: "No vehicles provided" });
+    }
 
     await conn.beginTransaction();
 
@@ -247,7 +253,9 @@ exports.createPurchaseFromInvoice = async (req, res) => {
     headerVals.push(notes, created_by);
 
     const [insP] = await conn.query(
-      `INSERT INTO vehicle_purchases (${headerCols.join(",")}) VALUES (${headerCols.map(() => "?").join(",")})`,
+      `INSERT INTO vehicle_purchases (${headerCols.join(",")}) VALUES (${headerCols
+        .map(() => "?")
+        .join(",")})`,
       headerVals
     );
     const purchase_id = insP.insertId;
@@ -261,12 +269,15 @@ exports.createPurchaseFromInvoice = async (req, res) => {
       const chassis_number = normalizeToken(v.chassis_number || "");
 
       const model_id = v.model_id != null && v.model_id !== "" ? Number(v.model_id) : null;
-      const variant_id = v.variant_id != null && v.variant_id !== "" ? Number(v.variant_id) : null;
+      const variant_id =
+        v.variant_id != null && v.variant_id !== "" ? Number(v.variant_id) : null;
       const color = v.color ? String(v.color).trim() : null;
 
       // UI can send purchase_price or amount
       const rowPrice =
-        (v.purchase_price != null && v.purchase_price !== "" ? Number(v.purchase_price) : null) ??
+        (v.purchase_price != null && v.purchase_price !== ""
+          ? Number(v.purchase_price)
+          : null) ??
         (v.amount != null && v.amount !== "" ? Number(v.amount) : null);
 
       const vehicle_model = v.vehicle_model ? String(v.vehicle_model).trim() : null;
@@ -303,7 +314,9 @@ exports.createPurchaseFromInvoice = async (req, res) => {
         }
 
         const [insV] = await conn.query(
-          `INSERT INTO contact_vehicles (${cvCols.join(",")}) VALUES (${cvCols.map(() => "?").join(",")})`,
+          `INSERT INTO contact_vehicles (${cvCols.join(",")}) VALUES (${cvCols
+            .map(() => "?")
+            .join(",")})`,
           cvVals
         );
 

@@ -1191,7 +1191,8 @@ async function ocrPdfToText(pdfPath) {
   const prefix = path.join(workDir, "page");
 
   try {
-await execFileAsync("/usr/bin/pdftoppm", ["-png", "-r", "250", pdfPath, prefix]);
+const pdftoppmBin = process.env.PDFTOPPM_BIN || "pdftoppm";
+await execFileAsync(pdftoppmBin, ["-png", "-r", "250", pdfPath, prefix]);
     const files = fs
       .readdirSync(workDir)
       .filter((f) => f.startsWith("page-") && f.endsWith(".png"))

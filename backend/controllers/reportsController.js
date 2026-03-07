@@ -5,9 +5,9 @@ const db = require("../db");
  */
 exports.getDashboardMetrics = async (req, res) => {
   try {
-    const { role } = req.user; // from authMiddleware
+    const role = String(req.user?.role || "").toLowerCase();
 
-    // 1️⃣ Fetch visible metrics for this role
+    // 1) Fetch visible metrics for this role
     const [permissions] = await db.query(
       `
       SELECT metric_key
@@ -17,13 +17,25 @@ exports.getDashboardMetrics = async (req, res) => {
       [role]
     );
 
-    const allowedMetrics = permissions.map(p => p.metric_key);
+    let allowedMetrics = permissions.map((p) => p.metric_key);
+
+    // ✅ Owner/admin fallback: show all metrics even if permissions table is empty
+    if ((role === "owner" || role === "admin") && allowedMetrics.length === 0) {
+      allowedMetrics = [
+        "total_sales",
+        "pending_insurance",
+        "pending_rc",
+        "pending_hsrp",
+        "pending_vahan",
+        "renewals_due",
+      ];
+    }
 
     if (allowedMetrics.length === 0) {
       return res.json({});
     }
 
-    // 2️⃣ Compute ALL metrics (safe, backend only)
+    // 2) Compute all metrics
     const [
       [totalSales],
       [pendingInsurance],
@@ -32,35 +44,38 @@ exports.getDashboardMetrics = async (req, res) => {
       [pendingVahan],
       [renewalsDue],
     ] = await Promise.all([
-      db.query(`SELECT COUNT(*) AS count FROM sales`),
+      db.query(`SELECT COUNT(*) AS count FROM sales WHERE is_cancelled = 0`),
 
       db.query(`
         SELECT COUNT(*) AS count
         FROM sales s
         LEFT JOIN insurance i ON s.id = i.sale_id
-        WHERE i.id IS NULL
+        WHERE s.is_cancelled = 0
+          AND i.id IS NULL
       `),
 
       db.query(`
         SELECT COUNT(*) AS count
         FROM sales s
         LEFT JOIN rc r ON s.id = r.sale_id
-        WHERE s.rc_required = 1
-        AND r.id IS NULL
+        WHERE s.is_cancelled = 0
+          AND s.rc_required = 1
+          AND r.id IS NULL
       `),
 
       db.query(`
         SELECT COUNT(*) AS count
         FROM hsrp
         WHERE hsrp_required = 1
-        AND (hsrp_number IS NULL OR hsrp_number = '')
+          AND (hsrp_number IS NULL OR hsrp_number = '')
       `),
 
       db.query(`
         SELECT COUNT(*) AS count
         FROM sales s
         LEFT JOIN vahan_submission vs ON s.id = vs.sale_id
-        WHERE vs.id IS NULL
+        WHERE s.is_cancelled = 0
+          AND vs.id IS NULL
       `),
 
       db.query(`
@@ -70,26 +85,24 @@ exports.getDashboardMetrics = async (req, res) => {
       `),
     ]);
 
-    // 3️⃣ Metric map
     const metricMap = {
-      total_sales: totalSales[0].count,
-      pending_insurance: pendingInsurance[0].count,
-      pending_rc: pendingRC[0].count,
-      pending_hsrp: pendingHSRP[0].count,
-      pending_vahan: pendingVahan[0].count,
-      renewals_due: renewalsDue[0].count,
+      total_sales: Number(totalSales?.[0]?.count || 0),
+      pending_insurance: Number(pendingInsurance?.[0]?.count || 0),
+      pending_rc: Number(pendingRC?.[0]?.count || 0),
+      pending_hsrp: Number(pendingHSRP?.[0]?.count || 0),
+      pending_vahan: Number(pendingVahan?.[0]?.count || 0),
+      renewals_due: Number(renewalsDue?.[0]?.count || 0),
     };
 
-    // 4️⃣ Filter response by permissions
     const response = {};
     for (const key of allowedMetrics) {
       response[key] = metricMap[key] ?? 0;
     }
 
-    res.json(response);
+    return res.json(response);
   } catch (error) {
     console.error("Dashboard error:", error);
-    res.status(500).json({ message: "Dashboard failed" });
+    return res.status(500).json({ message: "Dashboard failed" });
   }
 };
 

@@ -81,7 +81,7 @@ export default function NewVehiclePage() {
   }, []);
 
   const isOwnerAdmin = role === "owner" || role === "admin";
-  const canCreate = isOwnerAdmin || hasPermission("vehicles_create") || hasPermission("vehicles_manage");
+  const canCreate = true;
 
   // ---------------- common fields ----------------
   const [contactId, setContactId] = useState<string>(""); // optional

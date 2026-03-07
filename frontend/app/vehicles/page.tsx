@@ -16,13 +16,12 @@ type VehicleRow = {
   variant_id?: number | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
-  color?: string | null; // stored as code (BKB)
+  color?: string | null;
   created_at?: string | null;
 };
 
 type DDItem = { id: number; value: string; label?: string | null };
 
-// ✅ Color formatter (display only)
 function formatColorLabel(item: DDItem) {
   return item.label ? `${item.value} — ${item.label}` : item.value;
 }
@@ -30,7 +29,6 @@ function formatColorLabel(item: DDItem) {
 export default function VehiclesPage() {
   const { hasPermission, loading: permsLoading } = usePermissions();
 
-  // role
   const [mounted, setMounted] = useState(false);
   const [role, setRole] = useState<string>("");
 
@@ -42,16 +40,15 @@ export default function VehiclesPage() {
 
   const isOwnerAdmin = role === "owner" || role === "admin";
 
-  // Permissions
-  const canView = true; // list view for all
+  const canView = true;
   const canExport = isOwnerAdmin || hasPermission("export_excel");
   const canImport = isOwnerAdmin || hasPermission("import_excel") || hasPermission("bulk_upload");
-  const canAddVehicle = isOwnerAdmin || hasPermission("vehicles_create") || hasPermission("vehicles_manage");
 
-  // ✅ Delete only for owner/admin
+  // ✅ changed: Add Vehicle visible for all staff
+  const canAddVehicle = true;
+
   const canDelete = isOwnerAdmin;
 
-  // ---------------- state ----------------
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<VehicleRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,12 +58,10 @@ export default function VehiclesPage() {
   const [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState(0);
 
-  // ✅ NEW: color dropdown map for display
   const [colorMap, setColorMap] = useState<Map<string, DDItem>>(new Map());
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  // ---------------- dropdowns (colors) ----------------
   const loadColorDropdown = async () => {
     try {
       const res = await api.get("/api/dropdowns", { params: { types: "vehicle_color" } });
@@ -93,7 +88,6 @@ export default function VehiclesPage() {
     return hit ? formatColorLabel(hit) : c;
   };
 
-  // ---------------- fetch ----------------
   const fetchVehicles = async (opts?: { forcePage?: number; forceQ?: string; forcePageSize?: number }) => {
     if (!canView) return;
 
@@ -142,7 +136,6 @@ export default function VehiclesPage() {
     fetchVehicles({ forcePage: 1, forceQ: "" });
   };
 
-  // ---------------- Import / Export ----------------
   const downloadTemplate = async () => {
     const res = await api.get("/api/vehicles/_import/template", { responseType: "blob" });
     const url = window.URL.createObjectURL(res.data);
@@ -175,7 +168,6 @@ export default function VehiclesPage() {
     await fetchVehicles({ forcePage: 1 });
   };
 
-  // ---------------- delete ----------------
   const deleteVehicle = async (id: number) => {
     if (!canDelete) return;
 
@@ -191,7 +183,6 @@ export default function VehiclesPage() {
     }
   };
 
-  // ---------------- pagination helpers ----------------
   const goFirst = () => setPage(1);
   const goPrev = () => setPage((p) => Math.max(1, p - 1));
   const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
@@ -210,7 +201,6 @@ export default function VehiclesPage() {
           </div>
         ) : (
           <div className="bg-white p-6 rounded-xl shadow">
-            {/* Header */}
             <div className="flex justify-between items-start flex-wrap gap-3">
               <div>
                 <h1 className="text-2xl font-bold">Vehicles</h1>
@@ -279,7 +269,6 @@ export default function VehiclesPage() {
               </div>
             </div>
 
-            {/* Search + Page Size */}
             <div className="mt-4 flex justify-between gap-4 flex-wrap">
               <div className="flex-1 min-w-[260px]">
                 <input
@@ -318,7 +307,6 @@ export default function VehiclesPage() {
 
             {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
 
-            {/* Table */}
             <div className="mt-4 overflow-x-auto border rounded-lg">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
@@ -353,25 +341,20 @@ export default function VehiclesPage() {
                         <td className="px-3 py-2 border-b">{r.engine_number || "-"}</td>
                         <td className="px-3 py-2 border-b">{r.vehicle_make || "-"}</td>
                         <td className="px-3 py-2 border-b">{r.vehicle_model || "-"}</td>
-
-                        {/* ✅ NEW: show code — label */}
                         <td className="px-3 py-2 border-b">{displayColor(r.color)}</td>
 
                         <td className="px-3 py-2 border-b text-right">
                           <div className="flex justify-end gap-2">
-                            {/* ✅ View for ALL */}
                             <Link href={`/vehicles/${r.id}`} className="px-3 py-1.5 border rounded-lg">
                               View
                             </Link>
 
-                            {/* Contact quick link if linked */}
                             {r.contact_id ? (
                               <Link href={`/contacts/${r.contact_id}`} className="px-3 py-1.5 border rounded-lg">
                                 Contact
                               </Link>
                             ) : null}
 
-                            {/* ✅ Delete only owner/admin */}
                             {canDelete && (
                               <button
                                 onClick={() => deleteVehicle(r.id)}
@@ -389,7 +372,6 @@ export default function VehiclesPage() {
               </table>
             </div>
 
-            {/* Pagination */}
             <div className="mt-4 flex justify-between items-center flex-wrap gap-2">
               <div className="text-sm">Total: {total}</div>
 
@@ -417,4 +399,3 @@ export default function VehiclesPage() {
     </AuthGuard>
   );
 }
-//test
