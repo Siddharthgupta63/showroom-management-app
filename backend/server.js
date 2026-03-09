@@ -5,6 +5,7 @@ const bodyParser = require("body-parser");
 const dotenv = require("dotenv");
 const path = require("path");
 const branchesRoutes = require("./routes/branches");
+const { ensureViews } = require("./utils/ensureViews");
 
 dotenv.config(); // load env first
 
@@ -106,6 +107,17 @@ app.use((err, req, res, next) => {
 
 // -------------------- START SERVER --------------------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Showroom Backend Running -> http://localhost:${PORT}`);
-});
+
+async function startServer() {
+  try {
+    await ensureViews();
+    app.listen(PORT, () => {
+      console.log(`🚀 Showroom Backend Running -> http://localhost:${PORT}`);
+    });
+  } catch (err) {
+    console.error("❌ Failed to start backend:", err?.message || err);
+    process.exit(1);
+  }
+}
+
+startServer();
