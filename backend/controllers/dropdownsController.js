@@ -13,6 +13,7 @@ const ALLOWED_TYPES = new Set([
   "vehicle_make",
   "vehicle_color",
   "vehicle_purchase_from",
+  "nominee_relation",
 ]);
 
 function normType(t) {

@@ -30,6 +30,7 @@ const TYPES: Array<{ key: string; label: string }> = [
   { key: "vehicle_make", label: "Vehicle Make" },
   { key: "vehicle_color", label: "Vehicle Color (Code + Full Form)" },
   { key: "vehicle_purchase_from", label: "Purchase From" },
+  { key: "nominee_relation", label: "Nominee Relation" },
 
   { key: "vehicle_models", label: "Vehicle Models" },
   { key: "vehicle_variants", label: "Vehicle Variants" },
@@ -47,9 +48,6 @@ export default function AdminDropdownsPage() {
 
   const isOwnerAdmin = role === "owner" || role === "admin";
 
-  // ✅ Requirement: Only Owner/Admin can add/edit colors (and manage dropdowns generally)
-  // So we keep view permission for all (via AuthGuard) but manage is owner/admin only.
-  // If you still want manager with manage_dropdowns to edit non-color, tell me and I’ll adjust.
   const canManage = isOwnerAdmin;
 
   const [type, setType] = useState<string>(TYPES[0].key);
@@ -65,7 +63,6 @@ export default function AdminDropdownsPage() {
 
   const isVehicleColor = type === "vehicle_color";
 
-  // add form state
   const [newValue, setNewValue] = useState("");
   const [newLabel, setNewLabel] = useState("");
 
@@ -159,7 +156,6 @@ export default function AdminDropdownsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogModelId]);
 
-  // reset add inputs when type changes
   useEffect(() => {
     setNewValue("");
     setNewLabel("");
@@ -191,8 +187,10 @@ export default function AdminDropdownsPage() {
         return;
       }
 
-      // ✅ Normal dropdown_master add (with optional label for vehicle_color)
-      await api.post(`/api/dropdowns/${type}`, { value: v, label: isVehicleColor ? (l || null) : null });
+      await api.post(`/api/dropdowns/${type}`, {
+        value: v,
+        label: isVehicleColor ? (l || null) : null,
+      });
 
       setNewValue("");
       setNewLabel("");
@@ -255,7 +253,6 @@ export default function AdminDropdownsPage() {
               </Link>
             </div>
 
-            {/* Controls */}
             <div className="mt-4 flex gap-3 flex-wrap items-end">
               <div>
                 <div className="text-sm text-gray-600 mb-1">Type</div>
@@ -291,7 +288,6 @@ export default function AdminDropdownsPage() {
                 Show inactive
               </label>
 
-              {/* Add inputs */}
               <div className="flex-1 min-w-[260px]">
                 <div className="text-sm text-gray-600 mb-1">
                   {isVehicleColor ? "Add new color (Code + Full Form)" : "Add new value"}
@@ -305,10 +301,10 @@ export default function AdminDropdownsPage() {
                       isCatalogModels
                         ? "Type model name..."
                         : isCatalogVariants
-                          ? "Type variant name..."
-                          : isVehicleColor
-                            ? "Color code (e.g., BKB)"
-                            : "Type value..."
+                        ? "Type variant name..."
+                        : isVehicleColor
+                        ? "Color code (e.g., BKB)"
+                        : "Type value..."
                     }
                     className="flex-1 min-w-[220px] px-3 py-2 border rounded-lg"
                   />
@@ -338,7 +334,6 @@ export default function AdminDropdownsPage() {
 
             {err ? <div className="mt-3 text-sm text-red-600">{err}</div> : null}
 
-            {/* Table */}
             <div className="mt-4 overflow-x-auto border rounded-lg">
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-50">
@@ -383,7 +378,9 @@ export default function AdminDropdownsPage() {
                           {isVehicleColor && !isCatalogMode ? (
                             <>
                               <td className="px-3 py-2 border-b font-mono">{r.value}</td>
-                              <td className="px-3 py-2 border-b">{r.label || <span className="text-gray-400">—</span>}</td>
+                              <td className="px-3 py-2 border-b">
+                                {r.label || <span className="text-gray-400">—</span>}
+                              </td>
                             </>
                           ) : (
                             <td className="px-3 py-2 border-b">{r.value}</td>

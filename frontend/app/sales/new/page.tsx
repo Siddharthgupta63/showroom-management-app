@@ -101,7 +101,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-// ✅ Locked display input (read-only)
 function LockedInput({ value }: { value: any }) {
   return (
     <input
@@ -121,7 +120,6 @@ export default function NewSalePage() {
 
   const [err, setErr] = useState("");
 
-  // ---------------- Branches (required) ----------------
   const [branches, setBranches] = useState<BranchRow[]>([]);
   const [branchId, setBranchId] = useState<number | "">("");
 
@@ -134,32 +132,37 @@ export default function NewSalePage() {
     }
   };
 
-  // ---------------- Dropdowns ----------------
   const [ddInsuranceCompanies, setDdInsuranceCompanies] = useState<DropdownItem[]>([]);
   const [ddInsuranceBrokers, setDdInsuranceBrokers] = useState<DropdownItem[]>([]);
   const [ddFinanceCompanies, setDdFinanceCompanies] = useState<DropdownItem[]>([]);
   const [ddTyres, setDdTyres] = useState<DropdownItem[]>([]);
   const [ddHelmets, setDdHelmets] = useState<DropdownItem[]>([]);
+  const [ddNomineeRelations, setDdNomineeRelations] = useState<DropdownItem[]>([]);
 
   const loadDropdowns = async () => {
-    try {
-      const res = await api.get("/api/dropdowns", {
-        params: { types: "insurance_company,insurance_broker,finance_company,tyre,helmet" },
-      });
-      const data = res.data?.data || {};
-      setDdInsuranceCompanies(data.insurance_company || []);
-      setDdInsuranceBrokers(data.insurance_broker || []);
-      setDdFinanceCompanies(data.finance_company || []);
-      setDdTyres(data.tyre || []);
-      setDdHelmets(data.helmet || []);
-    } catch {
-      setDdInsuranceCompanies([]);
-      setDdInsuranceBrokers([]);
-      setDdFinanceCompanies([]);
-      setDdTyres([]);
-      setDdHelmets([]);
-    }
-  };
+  try {
+    const res = await api.get("/api/dropdowns", {
+      params: {
+        types: "insurance_company,insurance_broker,finance_company,tyre,helmet,nominee_relation",
+      },
+    });
+
+    const data = res.data?.data || {};
+    setDdInsuranceCompanies(data.insurance_company || []);
+    setDdInsuranceBrokers(data.insurance_broker || []);
+    setDdFinanceCompanies(data.finance_company || []);
+    setDdTyres(data.tyre || []);
+    setDdHelmets(data.helmet || []);
+    setDdNomineeRelations(data.nominee_relation || []);
+  } catch {
+    setDdInsuranceCompanies([]);
+    setDdInsuranceBrokers([]);
+    setDdFinanceCompanies([]);
+    setDdTyres([]);
+    setDdHelmets([]);
+    setDdNomineeRelations([]);
+  }
+};
 
   useEffect(() => {
     loadBranches();
@@ -219,7 +222,6 @@ export default function NewSalePage() {
     );
   };
 
-  // ---------------- Contacts search + pagination ----------------
   const [cq, setCq] = useState("");
   const dcq = useDebounced(cq, 250);
   const [contacts, setContacts] = useState<ContactRow[]>([]);
@@ -275,7 +277,6 @@ export default function NewSalePage() {
     );
   }, [contact]);
 
-  // ---------------- Vehicles search + pagination ----------------
   const [vq, setVq] = useState("");
   const dvq = useDebounced(vq, 250);
   const [includeUnlinked, setIncludeUnlinked] = useState(true);
@@ -313,7 +314,6 @@ export default function NewSalePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dvq, vehiclePage, vehiclePageSize, includeUnlinked, contactId]);
 
-  // ---------------- History ----------------
   const [history, setHistory] = useState<SalesTraceRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -343,7 +343,6 @@ export default function NewSalePage() {
     }
   };
 
-  // ---------------- Sale form ----------------
   const [saleDate, setSaleDate] = useState(toYYYYMMDD(new Date()));
   const [customerName, setCustomerName] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
@@ -352,6 +351,9 @@ export default function NewSalePage() {
 
   const [fatherName, setFatherName] = useState("");
   const [age, setAge] = useState<string>("");
+
+  const [nomineeName, setNomineeName] = useState("");
+  const [nomineeRelation, setNomineeRelation] = useState("");
 
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [salePrice, setSalePrice] = useState<number>(0);
@@ -367,6 +369,8 @@ export default function NewSalePage() {
   const [cpaInsuranceNumber, setCpaInsuranceNumber] = useState("");
 
   const [tyre, setTyre] = useState("");
+  const [batteryNo, setBatteryNo] = useState("");
+  const [keyNo, setKeyNo] = useState("");
   const [helmet, setHelmet] = useState("");
 
   const [rcRequired, setRcRequired] = useState(false);
@@ -379,13 +383,11 @@ export default function NewSalePage() {
     if (cpaIncluded === "included") setCpaInsuranceNumber("");
   }, [cpaIncluded]);
 
-  // Autofill when contact picked (but locked afterwards)
   useEffect(() => {
     if (!contactPicked || !contactId || !contact) return;
     setCustomerName(contactFullName);
     setMobileNumber(primaryPhone);
     setAddress(contact.address || "");
-    // keep email (if you later store it on contact)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactPicked, contactId, contact?.id]);
 
@@ -393,7 +395,6 @@ export default function NewSalePage() {
   const pickedVariant = selectedVehicle?.variant_name || "";
   const vehicleLabel = [pickedModel, pickedVariant].filter(Boolean).join(" ").trim();
 
-  // ---------------- Documents (preselect -> upload after create) ----------------
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [pendingDocs, setPendingDocs] = useState<File[]>([]);
   const [docsUploading, setDocsUploading] = useState(false);
@@ -484,15 +485,13 @@ export default function NewSalePage() {
         branch_id: Number(branchId),
 
         contact_id: contactId,
-        contact_vehicle_id: selectedVehicle.id, // ✅ correct key
+        contact_vehicle_id: selectedVehicle.id,
 
-        // ✅ locked but still saved
         customer_name: customerName.trim(),
         mobile_number: mobileNumber.trim(),
         email: email || null,
         address: address || null,
 
-        // ✅ locked from vehicle
         vehicle_make: selectedVehicle.vehicle_make || "Hero",
         vehicle_model: vehicleLabel || null,
         chassis_number: selectedVehicle.chassis_number,
@@ -505,6 +504,9 @@ export default function NewSalePage() {
         father_name: fatherName || null,
         age: age ? Number(age) : null,
 
+        nominee_name: nomineeName || null,
+        nominee_relation: nomineeRelation || null,
+
         insurance_number: insuranceNumber || null,
         insurance_company: insuranceCompany || null,
         insurance_broker: insuranceBroker || null,
@@ -515,6 +517,8 @@ export default function NewSalePage() {
         cpa_insurance_number: cpaIncluded === "not_included" ? cpaInsuranceNumber || null : null,
 
         tyre: tyre || null,
+        battery_no: batteryNo || null,
+        key_no: keyNo || null,
         helmet: helmet || null,
 
         rc_required: rcRequired ? 1 : 0,
@@ -575,7 +579,6 @@ export default function NewSalePage() {
             </div>
           </div>
 
-          {/* Branch */}
           <div className="mt-4 border rounded-xl bg-white p-4">
             <div className="font-semibold">Branch *</div>
             <div className="text-xs text-gray-500 mb-2">Required for every sale</div>
@@ -593,7 +596,6 @@ export default function NewSalePage() {
             </select>
           </div>
 
-          {/* Documents */}
           <div className="mt-4 border rounded-xl bg-white p-4 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="font-semibold">Documents</div>
@@ -621,7 +623,6 @@ export default function NewSalePage() {
 
           {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
 
-          {/* Contact */}
           <div className="mt-6 border rounded-xl bg-white p-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
@@ -702,7 +703,6 @@ export default function NewSalePage() {
                                   await loadContact(c.id);
                                   setContactPicked(true);
 
-                                  // locked autofill happens in effect
                                   setSelectedVehicle(null);
                                   setVehiclePicked(false);
                                   setHistory([]);
@@ -751,7 +751,6 @@ export default function NewSalePage() {
             )}
           </div>
 
-          {/* Vehicle */}
           <div className="mt-6 border rounded-xl bg-white p-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
@@ -898,7 +897,6 @@ export default function NewSalePage() {
             )}
           </div>
 
-          {/* Sale Details */}
           {contactId && selectedVehicle && (
             <div className="mt-6 border rounded-xl bg-white p-4">
               <div className="font-semibold">3) Sale Details</div>
@@ -907,7 +905,6 @@ export default function NewSalePage() {
               </div>
 
               <div className="mt-3 grid md:grid-cols-3 gap-4">
-                {/* ✅ Locked fields from Contact */}
                 <Field label="Customer Name (Locked)">
                   <LockedInput value={customerName} />
                 </Field>
@@ -930,7 +927,6 @@ export default function NewSalePage() {
                   />
                 </Field>
 
-                {/* ✅ Locked fields from Vehicle */}
                 <Field label="Vehicle Make (Locked)">
                   <LockedInput value={lockedVehicleMake} />
                 </Field>
@@ -947,7 +943,6 @@ export default function NewSalePage() {
                   <LockedInput value={lockedEngine} />
                 </Field>
 
-                {/* Editable sale fields */}
                 <Field label="Sale Date">
                   <TextInput type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
                 </Field>
@@ -967,6 +962,20 @@ export default function NewSalePage() {
                 <Field label="Age">
                   <TextInput value={age} onChange={(e) => setAge(e.target.value)} />
                 </Field>
+
+                <Field label="Nominee Name">
+                  <TextInput value={nomineeName} onChange={(e) => setNomineeName(e.target.value)} />
+                </Field>
+
+               <Field label="Nominee Relation">
+  <DropdownOrInput
+    value={nomineeRelation}
+    onChange={setNomineeRelation}
+    options={ddNomineeRelations}
+    placeholder="Enter nominee relation..."
+    typeKey="nominee_relation"
+  />
+</Field>
 
                 <Field label="Payment Type *">
                   <select value={paymentType} onChange={(e) => setPaymentType(e.target.value as any)} className="w-full px-3 py-2 border rounded-lg bg-white">
@@ -1011,6 +1020,14 @@ export default function NewSalePage() {
                   <DropdownOrInput value={tyre} onChange={setTyre} options={ddTyres} placeholder="Enter tyre..." typeKey="tyre" />
                 </Field>
 
+                <Field label="Battery No">
+                  <TextInput value={batteryNo} onChange={(e) => setBatteryNo(e.target.value)} />
+                </Field>
+
+                <Field label="Key No">
+                  <TextInput value={keyNo} onChange={(e) => setKeyNo(e.target.value)} />
+                </Field>
+
                 <Field label="Helmet">
                   <DropdownOrInput value={helmet} onChange={setHelmet} options={ddHelmets} placeholder="Enter helmet..." typeKey="helmet" />
                 </Field>
@@ -1040,7 +1057,6 @@ export default function NewSalePage() {
                 </Field>
               </div>
 
-              {/* History */}
               <div className="mt-6">
                 <div className="font-semibold">Sales History (same chassis/engine)</div>
                 {historyLoading ? (

@@ -45,9 +45,7 @@ function toDateISO(d) {
   const s = String(d).trim();
   if (!s) return null;
 
-  // If ISO datetime like 2026-02-14T18:30:00.000Z
   if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
-
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
   const dt = new Date(s);
@@ -107,9 +105,9 @@ function normalizeSaleExtraFields(body) {
     nominee_relation: safeText(body.nominee_relation),
 
     key_no: safeText(body.key_no),
-
     tyre: safeText(body.tyre),
     battery_no: safeText(body.battery_no),
+    helmet: safeText(body.helmet),
 
     insurance_number: safeText(body.insurance_number || body.insurance_no),
     insurance_company: safeText(body.insurance_company),
@@ -121,7 +119,6 @@ function normalizeSaleExtraFields(body) {
     aadhaar_number: safeText(body.aadhaar_number),
     sb_tools: safeText(body.sb_tools),
     good_life_no: safeText(body.good_life_no),
-    helmet: safeText(body.helmet),
   };
 }
 
@@ -194,6 +191,185 @@ async function getBranchName(conn, branchId) {
 }
 
 // =====================================================
+// Insurance helpers (NEW)
+// =====================================================
+async function getExistingColumns(conn, tableName, candidates) {
+  if (!candidates.length) return new Set();
+  const [rows] = await conn.query(
+    `SELECT COLUMN_NAME
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME IN (${candidates.map(() => "?").join(",")})`,
+    [tableName, ...candidates]
+  );
+  return new Set(rows.map((r) => r.COLUMN_NAME));
+}
+
+async function upsertInsuranceFromSale(conn, saleId, payload, reqUserId, opts = {}) {
+  const remarksSuffix = safeText(opts.remarksSuffix);
+ const vehicleNo =
+  safeText(payload.vehicle_no) ||
+  safeText(payload.registration_number) ||
+  safeText(payload.registration_no) ||
+  "";
+
+ const baseData = {
+  sale_id: saleId,
+  chassis_number: payload.chassis_number || null,
+  engine_number: payload.engine_number || null,
+  customer_name: payload.customer_name || null,
+  vehicle_no: vehicleNo,
+  phone: payload.mobile_number || null,
+  insurance_type: "new",
+  company: payload.insurance_company || null,
+  policy_number: payload.insurance_number || null,
+  cpa_included: payload.cpa_applicable ? 1 : 0,
+  cpa_number: payload.cpa_insurance_number || null,
+  premium_amount: payload.premium_amount != null ? numOrZero(payload.premium_amount) : 0,
+  start_date: payload.sale_date || null,
+  invoice_number: payload.invoice_number || null,
+  remarks: remarksSuffix || "Auto synced from sale",
+};
+
+  const hasEnoughData =
+    baseData.customer_name ||
+    baseData.phone ||
+    baseData.vehicle_no ||
+    baseData.company ||
+    baseData.policy_number ||
+    baseData.chassis_number;
+
+  if (!hasEnoughData) return;
+
+const insuranceCols = await getExistingColumns(conn, "insurance", [
+  "sale_id",
+  "chassis_number",
+  "engine_number",
+  "customer_name",
+  "vehicle_no",
+  "phone",
+  "insurance_type",
+  "company",
+  "policy_number",
+  "cpa_included",
+  "cpa_number",
+  "premium_amount",
+  "start_date",
+  "expiry_date",
+  "invoice_number",
+  "renewed_by",
+  "remarks",
+  "agent_name",
+  "agent",
+  "insurance_broker",
+  "broker",
+  "is_cancelled",
+  "cancelled_at",
+  "cancelled_by",
+]);
+
+  const insertData = {};
+
+  for (const [k, v] of Object.entries(baseData)) {
+    if (insuranceCols.has(k)) insertData[k] = v;
+  }
+
+  if (insuranceCols.has("renewed_by")) insertData.renewed_by = reqUserId || null;
+  if (insuranceCols.has("insurance_broker")) insertData.insurance_broker = payload.insurance_broker || null;
+  if (insuranceCols.has("broker")) insertData.broker = payload.insurance_broker || null;
+  if (insuranceCols.has("agent_name")) insertData.agent_name = payload.insurance_broker || null;
+  if (insuranceCols.has("agent")) insertData.agent = payload.insurance_broker || null;
+  if (insuranceCols.has("is_cancelled")) insertData.is_cancelled = 0;
+  if (insuranceCols.has("cancelled_at")) insertData.cancelled_at = null;
+  if (insuranceCols.has("cancelled_by")) insertData.cancelled_by = null;
+
+  const [existing] = await conn.query(
+    `SELECT id FROM insurance WHERE sale_id = ? LIMIT 1`,
+    [saleId]
+  );
+
+  if (!existing.length) {
+    if (insuranceCols.has("expiry_date")) {
+      insertData.expiry_date = null;
+    }
+
+    const cols = Object.keys(insertData);
+    if (!cols.length) return;
+
+    await conn.query(
+      `INSERT INTO insurance (${cols.join(",")})
+       VALUES (${cols.map(() => "?").join(",")})`,
+      cols.map((c) => insertData[c])
+    );
+    return;
+  }
+
+  const updates = {};
+
+  for (const [k, v] of Object.entries(insertData)) {
+    if (k !== "sale_id") updates[k] = v;
+  }
+
+  if (insuranceCols.has("expiry_date")) {
+    updates.expiry_date = null;
+  }
+
+  const updateCols = Object.keys(updates);
+  if (!updateCols.length) return;
+
+  await conn.query(
+    `UPDATE insurance
+     SET ${updateCols.map((c) => `${c} = ?`).join(", ")}
+     WHERE sale_id = ?`,
+    [...updateCols.map((c) => updates[c]), saleId]
+  );
+}
+
+async function cancelLinkedInsurance(conn, saleId, reqUserId) {
+  const insuranceCols = await getExistingColumns(conn, "insurance", [
+    "is_cancelled",
+    "cancelled_at",
+    "cancelled_by",
+    "remarks",
+  ]);
+
+  const setParts = [];
+  const params = [];
+
+  if (insuranceCols.has("is_cancelled")) {
+    setParts.push("is_cancelled = 1");
+  }
+
+  if (insuranceCols.has("cancelled_at")) {
+    setParts.push("cancelled_at = NOW()");
+  }
+
+  if (insuranceCols.has("cancelled_by")) {
+    setParts.push("cancelled_by = ?");
+    params.push(reqUserId || null);
+  }
+
+  if (insuranceCols.has("remarks")) {
+    setParts.push(
+      `remarks = CASE
+         WHEN remarks IS NULL OR remarks = '' THEN 'Cancelled because linked sale was cancelled'
+         ELSE CONCAT(remarks, ' | Cancelled because linked sale was cancelled')
+       END`
+    );
+  }
+
+  if (!setParts.length) return;
+
+  await conn.query(
+    `UPDATE insurance
+     SET ${setParts.join(", ")}
+     WHERE sale_id = ?`,
+    [...params, saleId]
+  );
+}
+
+// =====================================================
 // ✅ Branch + SOLD-lock validators (NEW)
 // =====================================================
 async function assertValidBranch(conn, branchId, { required = false } = {}) {
@@ -255,7 +431,6 @@ async function assertVehicleNotSold(conn, vehicleId, saleIdToExclude) {
 }
 
 async function buildSnapshotObject(conn, saleId) {
-  // sale
   const [sRows] = await conn.query(
     `SELECT s.*
      FROM sales s
@@ -266,7 +441,6 @@ async function buildSnapshotObject(conn, saleId) {
   if (!sRows.length) return null;
   const s = sRows[0];
 
-  // contact info
   let contact = null;
   let primaryPhone = null;
   if (s.contact_id) {
@@ -292,7 +466,6 @@ async function buildSnapshotObject(conn, saleId) {
     }
   }
 
-  // vehicle info
   let vehicle = null;
   if (s.contact_vehicle_id) {
     const [vRows] = await conn.query(
@@ -309,7 +482,6 @@ async function buildSnapshotObject(conn, saleId) {
     vehicle = vRows?.[0] || null;
   }
 
-  // insurance from sales table (keep old logic)
   const insurance = {
     insurance_company: s.insurance_company,
     policy_number: s.insurance_number,
@@ -317,13 +489,10 @@ async function buildSnapshotObject(conn, saleId) {
     insurance_broker: s.insurance_broker,
   };
 
-  // hsrp + rc (safe)
   const hsrp = await getLatestHsrp(conn, saleId);
   const rc = await getLatestRc(conn, saleId);
-
   const branch = await getBranchName(conn, s.branch_id);
 
-  // Normalize snapshot
   const snap = {
     sale: {
       id: s.id,
@@ -377,7 +546,6 @@ async function buildSnapshotObject(conn, saleId) {
   return snap;
 }
 
-// Upsert “dealer-format” snapshot table (single-row per sale_id)
 async function upsertSaleRegisterSnapshot(conn, snap) {
   const s = snap.sale || {};
   const c = snap.customer || {};
@@ -449,7 +617,6 @@ async function upsertSaleRegisterSnapshot(conn, snap) {
   );
 }
 
-// Versioned snapshot table (sale_snapshots)
 async function createVersionedSaleSnapshot(conn, saleId, snapshotJson, reason, createdBy) {
   const [vr] = await conn.query(
     `SELECT COALESCE(MAX(version), 0) AS v FROM sale_snapshots WHERE sale_id = ?`,
@@ -478,8 +645,7 @@ async function refreshSnapshots(conn, saleId, reason, reqUserId) {
 }
 
 // =====================================================
-// ✅ Trace sales (by chassis/engine) - paginated
-// GET /api/sales/trace?chassis=&engine=&vehicle_id=&page=&pageSize=
+// ✅ Trace sales
 // =====================================================
 exports.traceSales = async (req, res) => {
   try {
@@ -489,7 +655,6 @@ exports.traceSales = async (req, res) => {
     let engineVal = safeText(req.query.engine);
     const vehicleId = req.query.vehicle_id ? Number(req.query.vehicle_id) : null;
 
-    // if vehicle_id provided, fetch chassis/engine from contact_vehicles
     if (vehicleId && (!chassisVal || !engineVal)) {
       const [vRows] = await db.query(
         `SELECT chassis_number, engine_number
@@ -543,18 +708,12 @@ exports.traceSales = async (req, res) => {
 };
 
 // =====================================================
-// ✅ List sales (fast search + pagination + filters)
-// GET /api/sales?search=&q=&page=&limit=&pageSize=&branch_id=&is_cancelled=
-// - search/q: invoice/mobile/name/chassis/engine
-// - limit/pageSize: page size (cap 500)
-// - branch_id: filter
-// - is_cancelled: 0/1
+// ✅ List sales
 // =====================================================
 exports.getAllSales = async (req, res) => {
   try {
     const { page, pageSize, offset } = getPageParams(req, { page: 1, pageSize: 50 });
 
-    // Backward compatible query keys
     const q = String(req.query.search || req.query.q || req.query.keyword || req.query.term || "").trim();
 
     const branchId =
@@ -572,9 +731,8 @@ exports.getAllSales = async (req, res) => {
     const where = [];
     const params = [];
 
-    const dateFrom = String(req.query.date_from || "").trim(); // yyyy-mm-dd
-const dateTo = String(req.query.date_to || "").trim();     // yyyy-mm-dd
-
+    const dateFrom = String(req.query.date_from || "").trim();
+    const dateTo = String(req.query.date_to || "").trim();
 
     if (q) {
       where.push(
@@ -595,21 +753,19 @@ const dateTo = String(req.query.date_to || "").trim();     // yyyy-mm-dd
     }
 
     if (dateFrom) {
-  where.push(`s.sale_date >= ?`);
-  params.push(dateFrom);
-}
-if (dateTo) {
-  where.push(`s.sale_date <= ?`);
-  params.push(dateTo);
-}
-
+      where.push(`s.sale_date >= ?`);
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      where.push(`s.sale_date <= ?`);
+      params.push(dateTo);
+    }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     const [countRows] = await db.query(`SELECT COUNT(*) AS total FROM sales s ${whereSql}`, params);
     const total = Number(countRows?.[0]?.total || 0);
 
-    // ✅ Avoid SELECT * for performance
     const [rows] = await db.query(
       `SELECT
          s.id,
@@ -644,9 +800,7 @@ if (dateTo) {
 };
 
 // =====================================================
-// ✅ Create Sale (hard rule: contact + vehicle required)
-// + SOLD lock (not cancelled) + branch required/valid
-// POST /api/sales
+// ✅ Create Sale
 // =====================================================
 exports.createSale = async (req, res) => {
   try {
@@ -666,13 +820,9 @@ exports.createSale = async (req, res) => {
     try {
       await conn.beginTransaction();
 
-      // ✅ Branch required + must exist + active
       const branchId = await assertValidBranch(conn, body.branch_id, { required: true });
-
-      // ✅ Hard lock: vehicle cannot be sold twice
       await assertVehicleNotSold(conn, vehicleId, 0);
 
-      // contact + vehicle details
       const [cRows] = await conn.query(
         `SELECT id, first_name, last_name, full_name, address
          FROM contacts
@@ -735,6 +885,14 @@ exports.createSale = async (req, res) => {
           safeText(vehicle.model_name) ||
           null,
 
+        vehicle_no:
+          safeText(body.vehicle_no) ||
+          safeText(body.registration_number) ||
+          safeText(body.registration_no) ||
+          safeText(vehicle.vehicle_no) ||
+          safeText(vehicle.registration_number) ||
+          null,
+
         chassis_number: safeText(body.chassis_number) || safeText(vehicle.chassis_number),
         engine_number: safeText(body.engine_number) || safeText(vehicle.engine_number),
 
@@ -750,12 +908,20 @@ exports.createSale = async (req, res) => {
 
         ...extra,
 
+        cpa_applicable:
+          body.cpa_applicable === 1 ||
+          body.cpa_applicable === true ||
+          String(body.cpa_applicable || "").toLowerCase() === "1" ||
+          String(body.cpa_applicable || "").toLowerCase() === "true"
+            ? 1
+            : 0,
+
         documents_json: safeJsonArrayOrNull(body.documents_json),
         is_cancelled: 0,
         notes: safeText(body.notes),
       };
 
-      const insertCols = Object.keys(payload);
+      const insertCols = Object.keys(payload).filter((k) => k !== "vehicle_no");
       const insertVals = insertCols.map((k) => payload[k]);
       const placeholders = insertCols.map(() => "?").join(",");
 
@@ -766,7 +932,6 @@ exports.createSale = async (req, res) => {
 
       const saleId = ins.insertId;
 
-      // sale_vehicle_links (keep old logic)
       await conn.query(
         `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
          VALUES (?,?,?)
@@ -774,7 +939,6 @@ exports.createSale = async (req, res) => {
         [saleId, vehicleId, contactId]
       );
 
-      // vahan row (old pipeline logic)
       await conn.query(
         `INSERT INTO vahan (sale_id, insurance_done, hsrp_done, rc_done, rc_required, aadhaar_required)
          VALUES (?,?,?,?,?,?)
@@ -784,7 +948,6 @@ exports.createSale = async (req, res) => {
         [saleId, 0, 0, 0, payload.rc_required, payload.aadhaar_required]
       );
 
-      // incentives row
       await conn.query(
         `INSERT INTO incentives (sale_id)
          VALUES (?)
@@ -792,7 +955,11 @@ exports.createSale = async (req, res) => {
         [saleId]
       );
 
-      // ✅ create initial snapshots
+      // NEW: auto create insurance from sale data
+      await upsertInsuranceFromSale(conn, saleId, payload, req.user?.id || null, {
+        remarksSuffix: "Auto created from sale",
+      });
+
       await refreshSnapshots(conn, saleId, "create", req.user?.id || null);
 
       await conn.commit();
@@ -811,7 +978,6 @@ exports.createSale = async (req, res) => {
         await conn.rollback();
       } catch {}
 
-      // ✅ return clean status for our validator errors
       if (e?.statusCode) {
         return res.status(e.statusCode).json({ success: false, message: e.message });
       }
@@ -853,8 +1019,6 @@ exports.getSaleById = async (req, res) => {
 
 // =====================================================
 // PUT /api/sales/:id
-// ✅ SOLD lock + branch validate + refresh snapshots after update
-// ✅ Optional: allow changing contact/vehicle safely (requires both)
 // =====================================================
 exports.updateSale = async (req, res) => {
   const conn = await db.getConnection();
@@ -867,7 +1031,6 @@ exports.updateSale = async (req, res) => {
 
     await conn.beginTransaction();
 
-    // read current sale
     const [curRows] = await conn.query(`SELECT * FROM sales WHERE id = ? LIMIT 1`, [id]);
     if (!curRows.length) {
       await conn.rollback();
@@ -875,13 +1038,11 @@ exports.updateSale = async (req, res) => {
     }
     const cur = curRows[0];
 
-    // ✅ Branch: required (either provided or existing must be valid)
     const branchId =
       body.branch_id != null
         ? await assertValidBranch(conn, body.branch_id, { required: true })
         : await assertValidBranch(conn, cur.branch_id, { required: true });
 
-    // Optional reassignment
     const newContactId =
       body.contact_id != null && String(body.contact_id).trim() !== ""
         ? Number(body.contact_id)
@@ -896,7 +1057,6 @@ exports.updateSale = async (req, res) => {
       (body.contact_id != null && newContactId !== cur.contact_id) ||
       (body.contact_vehicle_id != null && newVehicleId !== cur.contact_vehicle_id);
 
-    // If changing either, require both
     if (changingLink) {
       if (!newContactId || !newVehicleId) {
         await conn.rollback();
@@ -907,12 +1067,10 @@ exports.updateSale = async (req, res) => {
       }
     }
 
-    // ✅ SOLD lock if vehicle changed
     if (newVehicleId && newVehicleId !== cur.contact_vehicle_id) {
       await assertVehicleNotSold(conn, newVehicleId, id);
     }
 
-    // Hydrate if link changed (keeps old auto-fill behavior but safe)
     let hydrated = null;
     if (changingLink) {
       const [cRows] = await conn.query(
@@ -962,8 +1120,6 @@ exports.updateSale = async (req, res) => {
       hydrated = {
         contact_id: newContactId,
         contact_vehicle_id: newVehicleId,
-
-        // prefer explicit body overrides, else hydrate from contact/vehicle
         customer_name: safeText(body.customer_name) || safeText(fullName) || cur.customer_name,
         mobile_number: safeText(body.mobile_number) || safeText(primaryPhone) || cur.mobile_number,
         address: safeText(body.address) || safeText(contact.address) || cur.address,
@@ -975,20 +1131,25 @@ exports.updateSale = async (req, res) => {
           safeText(vehicle.model_name) ||
           cur.vehicle_model,
 
+        vehicle_no:
+          safeText(body.vehicle_no) ||
+          safeText(body.registration_number) ||
+          safeText(body.registration_no) ||
+          safeText(vehicle.vehicle_no) ||
+          safeText(vehicle.registration_number) ||
+          null,
+
         chassis_number: safeText(body.chassis_number) || safeText(vehicle.chassis_number) || cur.chassis_number,
         engine_number: safeText(body.engine_number) || safeText(vehicle.engine_number) || cur.engine_number,
       };
     }
 
     const updates = {
-      // link fields (only if changed)
       ...(hydrated ? { contact_id: hydrated.contact_id, contact_vehicle_id: hydrated.contact_vehicle_id } : {}),
 
-      // common fields (old logic)
       father_name: extra.father_name,
       age: extra.age,
 
-      // if not hydrated, still allow manual update
       customer_name: hydrated ? hydrated.customer_name : safeText(body.customer_name),
       mobile_number: hydrated ? hydrated.mobile_number : safeText(body.mobile_number),
       address: hydrated ? hydrated.address : safeText(body.address),
@@ -996,7 +1157,6 @@ exports.updateSale = async (req, res) => {
       nominee_name: extra.nominee_name,
       nominee_relation: extra.nominee_relation,
 
-      // vehicle columns if not hydrated
       vehicle_make: hydrated ? hydrated.vehicle_make : safeText(body.vehicle_make),
       vehicle_model: hydrated ? hydrated.vehicle_model : safeText(body.vehicle_model),
       chassis_number: hydrated ? hydrated.chassis_number : safeText(body.chassis_number),
@@ -1010,7 +1170,13 @@ exports.updateSale = async (req, res) => {
       insurance_company: extra.insurance_company,
       insurance_broker: extra.insurance_broker,
       cpa_insurance_number: extra.cpa_insurance_number,
-      cpa_applicable: body.cpa_applicable ? 1 : 0,
+      cpa_applicable:
+        body.cpa_applicable === 1 ||
+        body.cpa_applicable === true ||
+        String(body.cpa_applicable || "").toLowerCase() === "1" ||
+        String(body.cpa_applicable || "").toLowerCase() === "true"
+          ? 1
+          : 0,
 
       finance_company: extra.finance_company,
       tyre: extra.tyre,
@@ -1030,14 +1196,12 @@ exports.updateSale = async (req, res) => {
       branch_id: branchId,
     };
 
-    // Do not overwrite with undefined; keep null allowed
     const cols = Object.keys(updates).filter((k) => k !== undefined);
     const setSql = cols.map((c) => `${c} = ?`).join(", ");
     const vals = cols.map((k) => updates[k]);
 
     await conn.query(`UPDATE sales SET ${setSql} WHERE id = ?`, [...vals, id]);
 
-    // keep sale_vehicle_links in sync when link changed
     if (hydrated && hydrated.contact_vehicle_id && hydrated.contact_id) {
       await conn.query(
         `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
@@ -1047,7 +1211,6 @@ exports.updateSale = async (req, res) => {
       );
     }
 
-    // keep vahan flags in sync
     await conn.query(
       `INSERT INTO vahan (sale_id, insurance_done, hsrp_done, rc_done, rc_required, aadhaar_required)
        VALUES (?,?,?,?,?,?)
@@ -1057,7 +1220,33 @@ exports.updateSale = async (req, res) => {
       [id, 0, 0, 0, updates.rc_required, updates.aadhaar_required]
     );
 
-    // ✅ Refresh snapshots after update
+    // NEW: sync insurance on sale edit
+   const insurancePayload = {
+  customer_name: updates.customer_name ?? cur.customer_name,
+  mobile_number: updates.mobile_number ?? cur.mobile_number,
+  vehicle_model: updates.vehicle_model ?? cur.vehicle_model,
+  vehicle_no:
+  hydrated?.vehicle_no ||
+  safeText(body.vehicle_no) ||
+  safeText(body.registration_number) ||
+  safeText(body.registration_no) ||
+  "",
+  chassis_number: updates.chassis_number ?? cur.chassis_number,
+  engine_number: updates.engine_number ?? cur.engine_number,
+  insurance_company: updates.insurance_company,
+  insurance_number: updates.insurance_number,
+  cpa_insurance_number: updates.cpa_insurance_number,
+  insurance_broker: updates.insurance_broker,
+  cpa_applicable: updates.cpa_applicable,
+  sale_date: updates.sale_date ?? toDateISO(cur.sale_date),
+  invoice_number: updates.invoice_number ?? cur.invoice_number,
+  premium_amount: body.premium_amount != null ? numOrZero(body.premium_amount) : 0,
+};
+
+    await upsertInsuranceFromSale(conn, id, insurancePayload, req.user?.id || null, {
+      remarksSuffix: "Auto updated from sale edit",
+    });
+
     await refreshSnapshots(conn, id, "update", req.user?.id || null);
 
     await conn.commit();
@@ -1076,7 +1265,6 @@ exports.updateSale = async (req, res) => {
       await conn.rollback();
     } catch {}
 
-    // validator errors
     if (err?.statusCode) {
       return res.status(err.statusCode).json({ success: false, message: err.message });
     }
@@ -1092,21 +1280,33 @@ exports.updateSale = async (req, res) => {
 // POST /api/sales/:id/cancel
 // =====================================================
 exports.cancelSale = async (req, res) => {
+  const conn = await db.getConnection();
   try {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
 
-    await db.query(
+    await conn.beginTransaction();
+
+    await conn.query(
       `UPDATE sales
        SET is_cancelled = 1, cancelled_at = NOW(), cancelled_by = ?
        WHERE id = ?`,
       [req.user?.id || null, id]
     );
 
+    await cancelLinkedInsurance(conn, id, req.user?.id || null);
+    await refreshSnapshots(conn, id, "cancel", req.user?.id || null);
+
+    await conn.commit();
     return res.json({ success: true });
   } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {}
     console.error("cancelSale error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
@@ -1128,21 +1328,6 @@ exports.deleteSale = async (req, res) => {
 
 // =====================================================
 // Upload Sale Documents
-// POST /api/sales/:id/documents
-// stores in sales.documents_json
-// =====================================================
-// =====================================================
-// Upload Sale Documents
-// POST /api/sales/:id/documents
-// ✅ Appends (does NOT delete old files)
-// ✅ Stores keys compatible with frontend: originalname/mimetype/size/filename/url/uploaded_at
-// =====================================================
-// =====================================================
-// Upload Sale Documents
-// POST /api/sales/:id/documents
-// ✅ Appends (does NOT delete old files)
-// ✅ Handles MySQL JSON returning string OR array/object
-// ✅ Prevents race overwrite using transaction + FOR UPDATE
 // =====================================================
 exports.uploadSaleDocuments = [
   upload.array("files", 10),
@@ -1157,7 +1342,6 @@ exports.uploadSaleDocuments = [
 
       await conn.beginTransaction();
 
-      // ✅ Lock row to avoid concurrent overwrites
       const [rows] = await conn.query(
         `SELECT documents_json
          FROM sales
@@ -1172,7 +1356,6 @@ exports.uploadSaleDocuments = [
         return res.status(404).json({ success: false, message: "Sale not found" });
       }
 
-      // ✅ Safe parse: documents_json may be string OR already-parsed JSON
       let current = [];
       try {
         const raw = rows[0].documents_json;
@@ -1180,7 +1363,6 @@ exports.uploadSaleDocuments = [
         if (Array.isArray(raw)) {
           current = raw;
         } else if (raw && typeof raw === "object") {
-          // if somehow stored as object, only accept array; else fallback
           current = Array.isArray(raw) ? raw : [];
         } else if (typeof raw === "string") {
           const parsed = raw ? JSON.parse(raw) : [];
@@ -1194,17 +1376,13 @@ exports.uploadSaleDocuments = [
 
       const nowIso = new Date().toISOString();
 
-      // ✅ Include keys used by your frontend + keep old keys
       const added = files.map((f) => ({
-        // frontend-friendly
         originalname: f.originalname,
         mimetype: f.mimetype,
         size: f.size,
         filename: f.filename,
         url: `/uploads/sales/${f.filename}`,
         uploaded_at: nowIso,
-
-        // backward compatible
         name: f.originalname,
         type: f.mimetype,
       }));
@@ -1230,16 +1408,12 @@ exports.uploadSaleDocuments = [
   },
 ];
 
-
 // =====================================================
-// Upload OLD sales (Owner/Admin)
-// POST /api/sales/upload-old
+// Upload OLD sales
 // =====================================================
 exports.uploadOldSales = [
   upload.single("file"),
   async (req, res) => {
-    // keep your old logic if you already parse excel/csv in your app
-    // Here we just return a safe placeholder success so it won't crash.
     return res.status(501).json({
       success: false,
       message:
@@ -1250,8 +1424,6 @@ exports.uploadOldSales = [
 
 // =====================================================
 // ✅ Printable Dealer Format (HTML)
-// GET /api/sales/:id/print
-// - Must be opened with Authorization header OR ?token=JWT (handled in routes)
 // =====================================================
 exports.getSalePrintData = async (req, res) => {
   try {
@@ -1263,7 +1435,6 @@ exports.getSalePrintData = async (req, res) => {
       const snap = await buildSnapshotObject(conn, id);
       if (!snap) return res.status(404).send("Sale not found");
 
-      // ensure register snapshot exists (always up-to-date before print)
       await upsertSaleRegisterSnapshot(conn, snap);
 
       const s = snap.sale;
@@ -1394,8 +1565,7 @@ exports.getSalePrintData = async (req, res) => {
 };
 
 // =====================================================
-// ✅ Export Sales CSV (Owner/Admin)
-// GET /api/sales/export?q=&branch_id=&is_cancelled=&date_from=&date_to=
+// ✅ Export Sales CSV
 // =====================================================
 exports.exportSalesCSV = async (req, res) => {
   try {
@@ -1411,8 +1581,8 @@ exports.exportSalesCSV = async (req, res) => {
           : 0
         : null;
 
-    const dateFrom = String(req.query.date_from || "").trim(); // yyyy-mm-dd
-    const dateTo = String(req.query.date_to || "").trim(); // yyyy-mm-dd
+    const dateFrom = String(req.query.date_from || "").trim();
+    const dateTo = String(req.query.date_to || "").trim();
 
     const where = [];
     const params = [];

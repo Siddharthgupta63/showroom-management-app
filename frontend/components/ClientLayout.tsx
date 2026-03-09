@@ -12,7 +12,6 @@ import PasswordPopup from "@/components/PasswordPopup";
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  // pages where sidebar/layout should NOT appear
   const noShell =
     pathname === "/login" ||
     pathname === "/" ||
@@ -25,15 +24,15 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <PasswordPopup />
 
       {noShell ? (
-        <main className="min-h-screen bg-gray-100">{children}</main>
+        <main className="min-h-screen bg-background text-foreground">
+          {children}
+        </main>
       ) : (
-        <div className="min-h-screen bg-gray-100">
-          {/* Desktop sidebar (fixed width 64) */}
+        <div className="min-h-screen bg-background text-foreground">
           <div className="hidden lg:block fixed left-0 top-0 h-screen w-64">
             <Sidebar />
           </div>
 
-          {/* Main content pushed right on desktop */}
           <main className="min-h-screen lg:ml-64">
             <div className="px-4 py-4 lg:px-6">{children}</div>
           </main>

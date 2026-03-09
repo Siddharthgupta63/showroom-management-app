@@ -283,7 +283,7 @@ export default function SalesRegisterPage() {
   // ✅ Export (Owner/Admin) + respects filters + date range
   const exportSales = async () => {
     try {
-      const params = buildParams({}); // includes date_from/date_to etc.
+      const params = buildParams({});
       delete params.page;
       delete params.pageSize;
 
@@ -314,8 +314,8 @@ export default function SalesRegisterPage() {
         <div className="max-w-6xl mx-auto">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
-              <h1 className="text-2xl font-bold">Sales Register</h1>
-              <p className="text-sm text-gray-500">
+              <h1 className="text-2xl font-bold text-slate-900">Sales Register</h1>
+              <p className="text-sm text-slate-600">
                 Search supports name/mobile/chassis/engine/invoice. Filters support branch, status and date range.
               </p>
             </div>
@@ -332,7 +332,7 @@ export default function SalesRegisterPage() {
 
               <button
                 onClick={downloadTemplateCSV}
-                className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50"
+                className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
               >
                 Download CSV Template
               </button>
@@ -352,7 +352,7 @@ export default function SalesRegisterPage() {
                   <button
                     onClick={() => fileRef.current?.click()}
                     disabled={uploading}
-                    className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
+                    className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                   >
                     {uploading ? "Uploading..." : "Upload Old Sales"}
                   </button>
@@ -370,27 +370,33 @@ export default function SalesRegisterPage() {
             </div>
           </div>
 
-          <div className="mt-4 p-4 border rounded-xl bg-white">
+          <div className="mt-4 p-4 border border-slate-300 rounded-xl bg-white">
             <div className="flex gap-2 items-center flex-wrap">
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search by name / mobile / chassis / engine / invoice..."
-                className="flex-1 min-w-[260px] px-3 py-2 border rounded-lg"
+                className="flex-1 min-w-[260px] px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400"
               />
-              <button onClick={onSearchClick} className="px-4 py-2 rounded-lg bg-gray-900 text-white">
+              <button
+                onClick={onSearchClick}
+                className="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+              >
                 Search
               </button>
-              <button onClick={onReset} className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50">
+              <button
+                onClick={onReset}
+                className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+              >
                 Reset
               </button>
 
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">Branch</span>
+                <span className="text-sm text-slate-700">Branch</span>
                 <select
                   value={branchId}
                   onChange={(e) => setBranchId(e.target.value ? Number(e.target.value) : "")}
-                  className="px-2 py-2 border rounded-lg"
+                  className="px-2 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
                 >
                   <option value="">All</option>
                   {branches.map((b) => (
@@ -402,11 +408,11 @@ export default function SalesRegisterPage() {
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">Status</span>
+                <span className="text-sm text-slate-700">Status</span>
                 <select
                   value={cancelFilter}
                   onChange={(e) => setCancelFilter(e.target.value as any)}
-                  className="px-2 py-2 border rounded-lg"
+                  className="px-2 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
                 >
                   <option value="">All</option>
                   <option value="0">Active</option>
@@ -414,29 +420,28 @@ export default function SalesRegisterPage() {
                 </select>
               </div>
 
-              {/* ✅ Date range */}
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">From</span>
+                <span className="text-sm text-slate-700">From</span>
                 <input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  className="px-2 py-2 border rounded-lg"
+                  className="px-2 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
                 />
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">To</span>
+                <span className="text-sm text-slate-700">To</span>
                 <input
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
-                  className="px-2 py-2 border rounded-lg"
+                  className="px-2 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
                 />
               </div>
 
               <div className="ml-auto flex items-center gap-2">
-                <span className="text-sm text-gray-600">Page size</span>
+                <span className="text-sm text-slate-700">Page size</span>
                 <select
                   value={pageSize}
                   onChange={(e) => {
@@ -445,7 +450,7 @@ export default function SalesRegisterPage() {
                     setPage(1);
                     fetchList({ search: debouncedQ, page: 1, pageSize: ps });
                   }}
-                  className="px-2 py-2 border rounded-lg"
+                  className="px-2 py-2 border border-slate-300 rounded-lg bg-white text-slate-900"
                 >
                   {[10, 20, 50, 100].map((n) => (
                     <option key={n} value={n}>
@@ -458,9 +463,9 @@ export default function SalesRegisterPage() {
 
             {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
 
-            <div className="mt-4 overflow-auto border rounded-xl">
+            <div className="mt-4 overflow-auto border border-slate-300 rounded-xl bg-white">
               <table className="min-w-[1100px] w-full">
-                <thead className="bg-gray-50 text-sm">
+                <thead className="bg-slate-50 text-sm text-slate-800">
                   <tr>
                     <th className="p-3 text-left">ID</th>
                     <th className="p-3 text-left">Customer</th>
@@ -474,10 +479,10 @@ export default function SalesRegisterPage() {
                     <th className="p-3 text-right">View</th>
                   </tr>
                 </thead>
-                <tbody className="text-sm">
+                <tbody className="text-sm text-slate-900">
                   {loading && (
                     <tr>
-                      <td className="p-4 text-gray-500" colSpan={10}>
+                      <td className="p-4 text-slate-600" colSpan={10}>
                         Loading...
                       </td>
                     </tr>
@@ -485,7 +490,7 @@ export default function SalesRegisterPage() {
 
                   {!loading && filtered.length === 0 && (
                     <tr>
-                      <td className="p-4 text-gray-500" colSpan={10}>
+                      <td className="p-4 text-slate-600" colSpan={10}>
                         No sales found.
                       </td>
                     </tr>
@@ -496,9 +501,9 @@ export default function SalesRegisterPage() {
                       const isOld = Boolean(s.is_old);
                       const rowKey = isOld ? `old-${s.id}` : `sale-${s.id}`;
                       return (
-                        <tr key={rowKey} className="border-t hover:bg-gray-50">
-                          <td className="p-3 text-gray-500">{s.id}</td>
-                          <td className="p-3 font-medium">
+                        <tr key={rowKey} className="border-t border-slate-200 hover:bg-slate-50">
+                          <td className="p-3 text-slate-600">{s.id}</td>
+                          <td className="p-3 font-medium text-slate-900">
                             {s.customer_name || "-"}{" "}
                             {isOld && (
                               <span className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">
@@ -506,33 +511,35 @@ export default function SalesRegisterPage() {
                               </span>
                             )}
                             {Number(s.is_cancelled) === 1 && !isOld && (
-                              <span className="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">
+                              <span className="ml-2 text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-700">
                                 Cancelled
                               </span>
                             )}
                           </td>
-                          <td className="p-3">{s.mobile_number || "-"}</td>
-                          <td className="p-3">{s.branch_name || "-"}</td>
-                          <td className="p-3">
+                          <td className="p-3 text-slate-900">{s.mobile_number || "-"}</td>
+                          <td className="p-3 text-slate-900">{s.branch_name || "-"}</td>
+                          <td className="p-3 text-slate-900">
                             {[s.vehicle_make, s.vehicle_model].filter(Boolean).join(" ") || "-"}
                           </td>
-                          <td className="p-3 font-mono">{s.chassis_number || "-"}</td>
-                          <td className="p-3 font-mono">{s.engine_number || "-"}</td>
-                          <td className="p-3">{formatDateIN(s.sale_date)}</td>
-                          <td className="p-3 text-right font-semibold">{moneyINR(s.sale_price)}</td>
+                          <td className="p-3 font-mono text-slate-900">{s.chassis_number || "-"}</td>
+                          <td className="p-3 font-mono text-slate-900">{s.engine_number || "-"}</td>
+                          <td className="p-3 text-slate-900">{formatDateIN(s.sale_date)}</td>
+                          <td className="p-3 text-right font-semibold text-slate-900">
+                            {moneyINR(s.sale_price)}
+                          </td>
                           <td className="p-3 text-right">
                             {isOld ? (
                               <button
                                 type="button"
                                 onClick={() => setViewOld(s)}
-                                className="inline-block px-3 py-1.5 border rounded-lg bg-white hover:bg-gray-50 text-sm"
+                                className="inline-block px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-800 hover:bg-slate-50 text-sm"
                               >
                                 View
                               </button>
                             ) : (
                               <Link
                                 href={`/sales/${s.id}`}
-                                className="inline-block px-3 py-1.5 border rounded-lg bg-white hover:bg-gray-50 text-sm"
+                                className="inline-block px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-800 hover:bg-slate-50 text-sm"
                               >
                                 {canEdit ? "Edit / View" : "View"}
                               </Link>
@@ -546,13 +553,13 @@ export default function SalesRegisterPage() {
             </div>
 
             <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm text-gray-600">
+              <div className="text-sm text-slate-700">
                 Total: <b>{total}</b> | Page <b>{page}</b> of <b>{totalPages}</b>
               </div>
 
               <div className="flex gap-2">
                 <button
-                  className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50"
+                  className="px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                   disabled={page <= 1 || loading}
                   onClick={() => {
                     const p = Math.max(1, page - 1);
@@ -563,7 +570,7 @@ export default function SalesRegisterPage() {
                   Prev
                 </button>
                 <button
-                  className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50"
+                  className="px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                   disabled={page >= totalPages || loading}
                   onClick={() => {
                     const p = Math.min(totalPages, page + 1);
@@ -581,66 +588,66 @@ export default function SalesRegisterPage() {
 
       {viewOld && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-white rounded-xl shadow-lg border">
-            <div className="p-4 border-b">
+          <div className="w-full max-w-xl bg-white rounded-xl shadow-lg border border-slate-300">
+            <div className="p-4 border-b border-slate-200">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-lg font-bold">Imported Sale (Read-only)</div>
-                  <div className="text-xs text-gray-500">This is an imported old sale record.</div>
+                  <div className="text-lg font-bold text-slate-900">Imported Sale (Read-only)</div>
+                  <div className="text-xs text-slate-600">This is an imported old sale record.</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setViewOld(null)}
-                  className="px-3 py-1.5 border rounded-lg bg-white hover:bg-gray-50 text-sm"
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-800 hover:bg-slate-50 text-sm"
                 >
                   Close
                 </button>
               </div>
             </div>
 
-            <div className="p-4 text-sm space-y-2">
+            <div className="p-4 text-sm space-y-2 text-slate-900">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <div className="text-xs text-gray-500">Customer</div>
+                  <div className="text-xs text-slate-600">Customer</div>
                   <div className="font-medium">{viewOld.customer_name || "-"}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500">Mobile</div>
+                  <div className="text-xs text-slate-600">Mobile</div>
                   <div className="font-medium">{viewOld.mobile_number || "-"}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500">Branch</div>
+                  <div className="text-xs text-slate-600">Branch</div>
                   <div className="font-medium">{viewOld.branch_name || "-"}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500">Sale Date</div>
+                  <div className="text-xs text-slate-600">Sale Date</div>
                   <div className="font-medium">{formatDateIN(viewOld.sale_date)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500">Vehicle</div>
+                  <div className="text-xs text-slate-600">Vehicle</div>
                   <div className="font-medium">
                     {[viewOld.vehicle_make, viewOld.vehicle_model].filter(Boolean).join(" ") || "-"}
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500">Amount</div>
+                  <div className="text-xs text-slate-600">Amount</div>
                   <div className="font-semibold">{moneyINR(viewOld.sale_price)}</div>
                 </div>
               </div>
 
               {viewOld.notes ? (
                 <div className="pt-2">
-                  <div className="text-xs text-gray-500">Notes</div>
+                  <div className="text-xs text-slate-600">Notes</div>
                   <div className="whitespace-pre-wrap">{viewOld.notes}</div>
                 </div>
               ) : null}
             </div>
 
-            <div className="p-4 border-t flex items-center justify-end">
+            <div className="p-4 border-t border-slate-200 flex items-center justify-end">
               <button
                 type="button"
                 onClick={() => setViewOld(null)}
-                className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm"
+                className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 text-sm"
               >
                 Close
               </button>

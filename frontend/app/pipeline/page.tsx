@@ -84,18 +84,18 @@ function badgeClass(state: StageState) {
   if (state === "done") return "bg-green-100 text-green-800";
   if (state === "pending") return "bg-orange-100 text-orange-800";
   if (state === "blocked") return "bg-red-100 text-red-800";
-  return "bg-gray-100 text-gray-700";
+  return "bg-slate-100 text-slate-700";
 }
 
 function pillClass(active: boolean) {
   return active
-    ? "bg-gray-900 text-white border-gray-900"
-    : "bg-white text-gray-900 border-gray-300 hover:bg-gray-50";
+    ? "bg-slate-900 text-white border-slate-900"
+    : "bg-white text-slate-900 border-slate-300 hover:bg-slate-50";
 }
 
 function smallCountPill(n: number) {
   return (
-    <span className="ml-2 inline-flex items-center justify-center min-w-[22px] px-2 h-5 text-xs rounded-full bg-gray-100 text-gray-800 border border-gray-200">
+    <span className="ml-2 inline-flex items-center justify-center min-w-[22px] px-2 h-5 text-xs rounded-full bg-slate-100 text-slate-800 border border-slate-200">
       {n}
     </span>
   );
@@ -148,15 +148,14 @@ function roleAllows(role: string | undefined, action: ActionKey) {
 
 function KpiCard({ title, value }: { title: string; value: number }) {
   return (
-    <div className="rounded-xl border bg-white p-3">
-      <div className="text-xs text-gray-500">{title}</div>
-      <div className="text-2xl font-bold">{Number(value || 0)}</div>
+    <div className="rounded-xl border border-slate-300 bg-white p-3">
+      <div className="text-xs text-slate-600">{title}</div>
+      <div className="text-2xl font-bold text-slate-900">{Number(value || 0)}</div>
     </div>
   );
 }
 
 export default function PipelinePage() {
-  // Hydration-safe rendering: date formatting + localStorage must only happen after mount.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
@@ -200,7 +199,6 @@ export default function PipelinePage() {
         params: query ? { q: query } : {},
       });
 
-      // supports both {success,data} and plain array
       const data = Array.isArray(res.data)
         ? res.data
         : res.data?.data || res.data?.rows || [];
@@ -296,7 +294,6 @@ export default function PipelinePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, filter]);
 
-  // Prefer backend export (server-enforced rows + permission)
   const exportCsv = () => {
     if (!canAction("export")) return;
     window.location.href = "/api/pipeline/export";
@@ -307,8 +304,8 @@ export default function PipelinePage() {
       <div className="p-6">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <div className="text-3xl font-bold">Pipeline</div>
-            <div className="text-gray-600">
+            <div className="text-3xl font-bold text-slate-900">Pipeline</div>
+            <div className="text-slate-700">
               Sale → Insurance → VAHAN → HSRP → RC → RTO → Renewals (Insurance Expiry)
             </div>
           </div>
@@ -318,14 +315,13 @@ export default function PipelinePage() {
               onClick={exportCsv}
               disabled={!canAction("export") || permLoading}
               title={canAction("export") ? "Export (CSV)" : "No permission"}
-              className="px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-50"
+              className="px-3 py-2 rounded border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 disabled:opacity-50"
             >
               Export (CSV)
             </button>
           </div>
         </div>
 
-        {/* KPI Cards */}
         <div className="mt-4">
           {kpiErr ? (
             <div className="text-sm text-red-600 font-semibold">{kpiErr}</div>
@@ -341,20 +337,20 @@ export default function PipelinePage() {
           ) : null}
         </div>
 
-        <div className="mt-4 bg-white rounded-2xl shadow p-4">
+        <div className="mt-4 bg-white rounded-2xl shadow p-4 border border-slate-200">
           <div className="flex items-center gap-3 flex-wrap">
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search: customer / mobile / chassis / engine / invoice / policy / vehicle no"
-              className="flex-1 min-w-[260px] border rounded-lg px-3 py-2"
+              className="flex-1 min-w-[260px] border border-slate-300 rounded-lg px-3 py-2 bg-white text-slate-900 placeholder:text-slate-400"
             />
             <button
               onClick={() => {
                 fetchList(q);
                 fetchKpis();
               }}
-              className="px-4 py-2 rounded bg-gray-900 text-white font-semibold"
+              className="px-4 py-2 rounded bg-slate-900 text-white font-semibold hover:bg-slate-800"
             >
               Search
             </button>
@@ -365,7 +361,7 @@ export default function PipelinePage() {
                 fetchList("");
                 fetchKpis();
               }}
-              className="px-4 py-2 rounded border font-semibold bg-white hover:bg-gray-50"
+              className="px-4 py-2 rounded border border-slate-300 font-semibold bg-white text-slate-800 hover:bg-slate-50"
             >
               Reset
             </button>
@@ -439,9 +435,9 @@ export default function PipelinePage() {
           </div>
         </div>
 
-        <div className="mt-6 bg-white rounded-2xl shadow overflow-x-auto">
+        <div className="mt-6 bg-white rounded-2xl shadow overflow-x-auto border border-slate-200">
           <table className="min-w-[1200px] w-full text-sm">
-            <thead className="bg-gray-50 border-b">
+            <thead className="bg-slate-50 border-b border-slate-200 text-slate-800">
               <tr>
                 <th className="text-left p-3">Customer</th>
                 <th className="text-left p-3">Mobile</th>
@@ -458,16 +454,16 @@ export default function PipelinePage() {
               </tr>
             </thead>
 
-            <tbody>
+            <tbody className="text-slate-900">
               {loading ? (
                 <tr>
-                  <td className="p-4 text-gray-600" colSpan={12}>
+                  <td className="p-4 text-slate-600" colSpan={12}>
                     Loading...
                   </td>
                 </tr>
               ) : filteredRows.length === 0 ? (
                 <tr>
-                  <td className="p-4 text-gray-600" colSpan={12}>
+                  <td className="p-4 text-slate-600" colSpan={12}>
                     No records
                   </td>
                 </tr>
@@ -476,7 +472,7 @@ export default function PipelinePage() {
                   const info = expiryInfo(row);
 
                   let expiryBadge = (
-                    <span className="inline-flex px-3 py-1 rounded-full bg-gray-100 text-gray-800 font-semibold">
+                    <span className="inline-flex px-3 py-1 rounded-full bg-slate-100 text-slate-800 font-semibold">
                       N/A
                     </span>
                   );
@@ -507,22 +503,22 @@ export default function PipelinePage() {
                   const canRc = canAction("open_rc");
 
                   return (
-                    <tr key={row.sale_id} className="border-b">
-                      <td className="p-3 font-semibold">{row.customer_name}</td>
-                      <td className="p-3">{row.mobile || "-"}</td>
-                      <td className="p-3">
+                    <tr key={row.sale_id} className="border-b border-slate-200">
+                      <td className="p-3 font-semibold text-slate-900">{row.customer_name}</td>
+                      <td className="p-3 text-slate-900">{row.mobile || "-"}</td>
+                      <td className="p-3 text-slate-900">
                         {(row.vehicle_make || "-") + " / " + (row.vehicle_model || "-")}
                       </td>
-                      <td className="p-3">{row.details.vehicle_no || "-"}</td>
-                      <td className="p-3">{row.chassis_number || "-"}</td>
-                      <td className="p-3">{row.invoice_number || "-"}</td>
-                      <td className="p-3">{row.details.policy_number || "-"}</td>
-                      <td className="p-3">{row.details.hsrp_number || "-"}</td>
-                      <td className="p-3">{row.details.rc_number || "-"}</td>
+                      <td className="p-3 text-slate-900">{row.details.vehicle_no || "-"}</td>
+                      <td className="p-3 text-slate-900">{row.chassis_number || "-"}</td>
+                      <td className="p-3 text-slate-900">{row.invoice_number || "-"}</td>
+                      <td className="p-3 text-slate-900">{row.details.policy_number || "-"}</td>
+                      <td className="p-3 text-slate-900">{row.details.hsrp_number || "-"}</td>
+                      <td className="p-3 text-slate-900">{row.details.rc_number || "-"}</td>
 
                       <td className="p-3">
                         <div>{expiryBadge}</div>
-                        <div className="text-xs text-gray-500 mt-1">
+                        <div className="text-xs text-slate-600 mt-1">
                           {formatDateSafe(row.details.insurance_expiry_date)}
                         </div>
                       </td>
@@ -556,8 +552,8 @@ export default function PipelinePage() {
                             href={`/sales/${row.sale_id}`}
                             className={`px-3 py-2 rounded border font-semibold ${
                               canSale
-                                ? "bg-gray-900 text-white hover:bg-black"
-                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                ? "bg-slate-900 text-white border-slate-900 hover:bg-black"
+                                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
                             }`}
                             onClick={(e) => !canSale && e.preventDefault()}
                           >
@@ -568,8 +564,8 @@ export default function PipelinePage() {
                             href={`/insurance?sale_id=${row.sale_id}`}
                             className={`px-3 py-2 rounded border font-semibold ${
                               canIns
-                                ? "bg-white hover:bg-gray-50"
-                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                ? "bg-white text-slate-800 border-slate-300 hover:bg-slate-50"
+                                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
                             }`}
                             onClick={(e) => !canIns && e.preventDefault()}
                           >
@@ -580,8 +576,8 @@ export default function PipelinePage() {
                             href={`/vahan?sale_id=${row.sale_id}`}
                             className={`px-3 py-2 rounded border font-semibold ${
                               canVahan
-                                ? "bg-white hover:bg-gray-50"
-                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                ? "bg-white text-slate-800 border-slate-300 hover:bg-slate-50"
+                                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
                             }`}
                             onClick={(e) => !canVahan && e.preventDefault()}
                           >
@@ -592,8 +588,8 @@ export default function PipelinePage() {
                             href={`/hsrp?sale_id=${row.sale_id}`}
                             className={`px-3 py-2 rounded border font-semibold ${
                               canHsrp
-                                ? "bg-white hover:bg-gray-50"
-                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                ? "bg-white text-slate-800 border-slate-300 hover:bg-slate-50"
+                                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
                             }`}
                             onClick={(e) => !canHsrp && e.preventDefault()}
                           >
@@ -604,8 +600,8 @@ export default function PipelinePage() {
                             href={`/rc?sale_id=${row.sale_id}`}
                             className={`px-3 py-2 rounded border font-semibold ${
                               canRc
-                                ? "bg-white hover:bg-gray-50"
-                                : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                ? "bg-white text-slate-800 border-slate-300 hover:bg-slate-50"
+                                : "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
                             }`}
                             onClick={(e) => !canRc && e.preventDefault()}
                           >
@@ -621,7 +617,7 @@ export default function PipelinePage() {
           </table>
         </div>
 
-        <div className="text-xs text-gray-500 mt-4">
+        <div className="text-xs text-slate-600 mt-4">
           Note: Pipeline rows are filtered server-side by role for visibility.
         </div>
       </div>
