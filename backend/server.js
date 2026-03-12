@@ -46,6 +46,7 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/sales", require("./routes/sales"));
 app.use("/api/contacts", require("./routes/contacts"));
 app.use("/api/vehicles", require("./routes/vehicles"));
+app.use("/api/vahan", require("./routes/vahan")); // ✅ added VAHAN routes
 
 app.use("/api/purchases", require("./routes/purchases")); // ✅ ONCE ONLY
 
@@ -73,7 +74,9 @@ try {
   console.log("✅ /api/dropdowns route loaded");
 } catch (e) {
   console.log("⚠️ /api/dropdowns route NOT loaded:", e?.message || e);
-  console.log("   Fix in backend/routes/dropdowns.js: ensure middleware imports are functions (not objects).");
+  console.log(
+    "   Fix in backend/routes/dropdowns.js: ensure middleware imports are functions (not objects)."
+  );
 }
 
 // -------------------- TEST ROUTES --------------------
@@ -85,10 +88,15 @@ app.get("/api/test", (req, res) => {
 app.get("/api/test-whatsapp-cron", async (req, res) => {
   try {
     if (!whatsappCron?.runOnce) {
-      return res.status(500).json({ success: false, message: "runOnce() not found" });
+      return res
+        .status(500)
+        .json({ success: false, message: "runOnce() not found" });
     }
     await whatsappCron.runOnce();
-    res.json({ success: true, message: "WhatsApp cron executed once (check whatsapp_reminders table)" });
+    res.json({
+      success: true,
+      message: "WhatsApp cron executed once (check whatsapp_reminders table)",
+    });
   } catch (e) {
     res.status(500).json({ success: false, message: e?.message || "Cron failed" });
   }

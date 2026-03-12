@@ -1,56 +1,26 @@
-// backend/routes/vahan.js
-
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
-const vahanController = require('../controllers/vahanController');
-const {
-  authMiddleware,
-  requireRole,
-} = require('../middleware/authMiddleware');
+const v = require("../controllers/vahanController");
+const { authMiddleware } = require("../middleware/authMiddleware");
 
-// --------------------------------------------------
-// CREATE Vahan details for a sale
-// POST /api/vahan/:sale_id
-// --------------------------------------------------
-router.post(
-  '/:sale_id',
-  authMiddleware,
-  requireRole('owner', 'manager', 'vahan', 'sales'),
-  vahanController.createVahan
-);
+// all routes require login
+router.use(authMiddleware);
 
-// --------------------------------------------------
-// GET Vahan details for a sale
-// GET /api/vahan/:sale_id
-// --------------------------------------------------
-router.get(
-  '/:sale_id',
-  authMiddleware,
-  requireRole('owner', 'manager', 'vahan', 'sales'),
-  vahanController.getVahan
-);
+// ✅ STATIC routes must come BEFORE /:sale_id
+router.get("/", v.listVahan);
+router.get("/dashboard-summary", v.dashboardSummary);
+router.get("/export", v.exportVahan);
 
-// --------------------------------------------------
-// UPDATE Vahan details for a sale
-// PUT /api/vahan/:sale_id
-// --------------------------------------------------
-router.put(
-  '/:sale_id',
-  authMiddleware,
-  requireRole('owner', 'manager', 'vahan', 'sales'),
-  vahanController.updateVahan
-);
+// ✅ dynamic routes after static routes
+router.get("/:sale_id", v.getVahan);
+router.put("/:sale_id/form", v.saveForm);
+router.put("/:sale_id/payment", v.savePayment);
+router.post("/:sale_id/complete", v.completeVahan);
 
-// --------------------------------------------------
-// DELETE Vahan record for a sale
-// DELETE /api/vahan/:sale_id
-// --------------------------------------------------
-router.delete(
-  '/:sale_id',
-  authMiddleware,
-  requireRole('owner', 'manager', 'vahan'),
-  vahanController.deleteVahan
-);
+// old logic support
+router.post("/", v.createVahan);
+router.put("/:sale_id", v.updateVahan);
+router.delete("/:sale_id", v.deleteVahan);
 
 module.exports = router;

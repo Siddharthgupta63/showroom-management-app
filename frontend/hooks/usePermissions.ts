@@ -1,17 +1,11 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { api } from "@/lib/api";
 
-type PermissionMap = Record<string, boolean>;
+type PermissionMap = Record<string, any>;
 
-/**
- * ✅ Reads token from "showroom_token" (main)
- * ✅ Also supports old key "token" (backup compat)
- * ✅ Calls /api/admin/my-permissions (owner/admin) as per your backend
- */
 export function usePermissions() {
   const [permissions, setPermissions] = useState<PermissionMap>({});
   const [loading, setLoading] = useState(true);
@@ -20,8 +14,8 @@ export function usePermissions() {
   const getToken = () => {
     if (typeof window === "undefined") return null;
     return (
-      localStorage.getItem("showroom_token") || // ✅ correct key
-      localStorage.getItem("token") // ✅ backward compatible
+      localStorage.getItem("showroom_token") ||
+      localStorage.getItem("token")
     );
   };
 
@@ -34,11 +28,9 @@ export function usePermissions() {
       }
 
       const res = await api.get("/api/admin/my-permissions");
-
-      // supports formats:
-      // { success: true, permissions: {...} }
-      // OR { permissions: {...} }
       const perms = res.data?.permissions;
+
+      console.log("my-permissions API response:", res.data);
 
       if (perms && typeof perms === "object") {
         setPermissions(perms);
@@ -56,12 +48,10 @@ export function usePermissions() {
   useEffect(() => {
     setLoading(true);
     loadPermissions();
-    // Re-run when route changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
   useEffect(() => {
-    // If token is set after login, force reload permissions
     const onStorage = (e: StorageEvent) => {
       if (e.key === "showroom_token" || e.key === "token") {
         setLoading(true);
@@ -71,7 +61,6 @@ export function usePermissions() {
 
     window.addEventListener("storage", onStorage);
 
-    // Also trigger once after mount (for same-tab login)
     const token = getToken();
     if (token) {
       setLoading(true);
@@ -82,10 +71,17 @@ export function usePermissions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const hasPermission = (key: string) => permissions[key] === true;
+  const hasPermission = (key: string) => {
+    const value = permissions[key];
+    return (
+      value === true ||
+      value === 1 ||
+      value === "1" ||
+      value === "true"
+    );
+  };
 
   return { permissions, hasPermission, loading };
 }
 
 export default usePermissions;
-

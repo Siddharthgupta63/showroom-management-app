@@ -1,339 +1,1152 @@
-// backend/controllers/vehiclesController.js
+// backend/controllers/vahanController.js
 const db = require("../db");
-const multer = require("multer");
 
-const upload = multer({ storage: multer.memoryStorage() });
-exports._uploadMiddleware = upload.single("file");
-
-// ---------- Excel helpers (LAZY LOAD) ----------
 function loadExcelJSOrThrow() {
   try {
     return require("exceljs");
   } catch (e) {
-    const msg =
-      "Excel feature is not ready because dependency is missing.\n" +
-      "Fix it like this:\n" +
-      "  cd backend\n" +
-      "  npm i exceljs\n" +
-      "Then restart backend.\n\n" +
-      "Original error: " + (e?.message || "unknown");
-    const err = new Error(msg);
+    const err = new Error("ExcelJS missing. Run: cd backend && npm i exceljs");
     err._isExcelMissing = true;
     throw err;
   }
 }
 
-function safeText(s) {
-  const v = String(s ?? "").trim();
-  return v ? v : null;
-}
-function norm(s) {
-  return String(s ?? "").trim();
+function toInt(v, d = null) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
 }
 
-// ---------- list/search ----------
-// GET /api/vehicles?q=
-exports.listSearch = async (req, res) => {
+function cleanText(v) {
+  const s = String(v ?? "").trim();
+  return s || null;
+}
+
+function yn(v) {
+  if (v === true || v === 1 || v === "1" || v === "true") return 1;
+  return 0;
+}
+
+function sqlDate(v) {
+  if (!v) return null;
+
+  const s = String(v).trim();
+  if (!s) return null;
+
+  // YYYY-MM-DD or ISO datetime
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.slice(0, 10);
+  }
+
+  // DD/MM/YYYY
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const dd = slash[1].padStart(2, "0");
+    const mm = slash[2].padStart(2, "0");
+    const yyyy = slash[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // DD-MM-YYYY
+  const dash = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dash) {
+    const dd = dash[1].padStart(2, "0");
+    const mm = dash[2].padStart(2, "0");
+    const yyyy = dash[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function asDateOnly(v) {
+  const s = sqlDate(v);
+  if (!s) return null;
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function formatDateOnly(dateObj) {
+  if (!dateObj || Number.isNaN(dateObj.getTime())) return null;
+  const yyyy = dateObj.getFullYear();
+  const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const dd = String(dateObj.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function todaySqlDate() {
+  return formatDateOnly(new Date());
+}
+
+async function getSaleById(saleId) {
+  const [rows] = await db.query(
+    `
+    SELECT
+      s.*,
+      CASE
+        WHEN i.id IS NOT NULL
+          OR COALESCE(s.insurance_number, '') <> ''
+          OR COALESCE(s.insurance_company, '') <> ''
+        THEN 1 ELSE 0
+      END AS insurance_done_calc
+    FROM sales s
+    LEFT JOIN insurance i ON i.sale_id = s.id
+    WHERE s.id = ?
+    LIMIT 1
+    `,
+    [saleId]
+  );
+  return rows[0] || null;
+}
+
+async function ensureVahanRow(saleId, userId) {
+  const sale = await getSaleById(saleId);
+  if (!sale) {
+    const err = new Error("Sale not found");
+    err.status = 404;
+    throw err;
+  }
+
+  await db.query(
+    `
+    INSERT INTO vahan
+      (sale_id, insurance_done, rc_required, aadhaar_required, current_status, last_updated_by, last_updated_at)
+    VALUES
+      (?, ?, ?, ?, ?, ?, NOW())
+    ON DUPLICATE KEY UPDATE
+      insurance_done = VALUES(insurance_done),
+      rc_required = VALUES(rc_required),
+      aadhaar_required = VALUES(aadhaar_required),
+      last_updated_by = VALUES(last_updated_by),
+      last_updated_at = NOW()
+    `,
+    [
+      saleId,
+      Number(sale.insurance_done_calc || 0),
+      Number(sale.rc_required || 0),
+      Number(sale.aadhaar_required || 0),
+      Number(sale.insurance_done_calc || 0)
+        ? "ready_for_vahan"
+        : "pending_insurance",
+      userId || null,
+    ]
+  );
+
+  return sale;
+}
+
+async function computeAndSaveStatus(saleId, userId) {
+  const sale = await getSaleById(saleId);
+  if (!sale) {
+    const err = new Error("Sale not found");
+    err.status = 404;
+    throw err;
+  }
+
+  const [subRows] = await db.query(
+    `SELECT * FROM vahan_submission WHERE sale_id = ? ORDER BY id DESC LIMIT 1`,
+    [saleId]
+  );
+  const sub = subRows[0] || null;
+
+  const insuranceDone = Number(sale.insurance_done_calc || 0);
+  let currentStatus = insuranceDone ? "ready_for_vahan" : "pending_insurance";
+  let isCompleted = 0;
+
+  if (sub?.application_number && !Number(sub?.payment_done || 0)) {
+    currentStatus = "payment_pending";
+  }
+
+  if (Number(sub?.payment_done || 0) === 1) {
+    currentStatus = "payment_done";
+  }
+
+  const [hsrpRows] = await db.query(
+    `SELECT id FROM hsrp WHERE sale_id = ? LIMIT 1`,
+    [saleId]
+  );
+
+  // Old logic kept:
+  // after payment_done, if HSRP row exists then completed
+  if (Number(sub?.payment_done || 0) === 1 && hsrpRows.length > 0) {
+    currentStatus = "completed";
+    isCompleted = 1;
+  }
+
+  await db.query(
+    `
+    UPDATE vahan
+    SET
+      insurance_done = ?,
+      current_status = ?,
+      is_completed = ?,
+      last_updated_by = ?,
+      last_updated_at = NOW()
+    WHERE sale_id = ?
+    `,
+    [insuranceDone, currentStatus, isCompleted, userId || null, saleId]
+  );
+
+  return { currentStatus, isCompleted };
+}
+
+function buildTabCondition(tab) {
+  switch (String(tab || "all")) {
+    case "pending_fill":
+      return `
+        AND (vs.application_number IS NULL OR vs.application_number = '')
+      `;
+    case "pending_payment":
+      return `
+        AND vs.application_number IS NOT NULL
+        AND vs.application_number <> ''
+        AND COALESCE(vs.payment_done, 0) = 0
+      `;
+    case "paid":
+      return ` AND COALESCE(vs.payment_done, 0) = 1 `;
+    case "unpaid":
+      return ` AND COALESCE(vs.payment_done, 0) = 0 `;
+    case "completed":
+      return ` AND v.current_status = 'completed' `;
+    default:
+      return ``;
+  }
+}
+
+function latestSubmissionJoinSql() {
+  return `
+    LEFT JOIN (
+      SELECT x.*
+      FROM vahan_submission x
+      INNER JOIN (
+        SELECT sale_id, MAX(id) AS max_id
+        FROM vahan_submission
+        GROUP BY sale_id
+      ) m ON m.sale_id = x.sale_id AND m.max_id = x.id
+    ) vs ON vs.sale_id = s.id
+  `;
+}
+
+// GET /api/vahan
+exports.listVahan = async (req, res) => {
   try {
-    const q = String(req.query.q || "").trim();
-    const like = `%${q}%`;
+    const page = Math.max(1, toInt(req.query.page, 1));
+    const limit = Math.max(1, Math.min(100, toInt(req.query.limit, 20)));
+    const offset = (page - 1) * limit;
 
-    let sql = `
-      SELECT
-        cv.id,
-        cv.contact_id,
-        cv.chassis_number,
-        cv.engine_number,
-        cv.model_id,
-        cv.variant_id,
-        cv.vehicle_make,
-        cv.vehicle_model,
-        cv.color,
-        cv.created_at,
-        vm.model_name,
-        vv.variant_name
-      FROM contact_vehicles cv
-      LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
-      LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
-      WHERE 1=1
-    `;
+    const search = String(req.query.search || "").trim();
+    const tab = String(req.query.tab || "all").trim();
+    const fromDate = sqlDate(req.query.from_date);
+    const toDate = sqlDate(req.query.to_date);
 
-    const params = [];
-    if (q) {
-      sql += `
+    let where = `
+      WHERE s.is_cancelled = 0
         AND (
-          cv.chassis_number LIKE ?
-          OR cv.engine_number LIKE ?
-          OR COALESCE(vm.model_name,'') LIKE ?
-          OR COALESCE(vv.variant_name,'') LIKE ?
-          OR COALESCE(cv.vehicle_make,'') LIKE ?
-          OR COALESCE(cv.vehicle_model,'') LIKE ?
-          OR COALESCE(cv.color,'') LIKE ?
-          OR CAST(cv.contact_id AS CHAR) LIKE ?
+          i.id IS NOT NULL
+          OR COALESCE(s.insurance_number, '') <> ''
+          OR COALESCE(s.insurance_company, '') <> ''
+        )
+    `;
+    const params = [];
+
+    where += buildTabCondition(tab);
+
+    if (fromDate) {
+      where += ` AND DATE(s.sale_date) >= ? `;
+      params.push(fromDate);
+    }
+
+    if (toDate) {
+      where += ` AND DATE(s.sale_date) <= ? `;
+      params.push(toDate);
+    }
+
+    if (search) {
+      where += `
+        AND (
+          COALESCE(s.customer_name, '') LIKE ?
+          OR COALESCE(s.mobile_number, '') LIKE ?
+          OR COALESCE(s.invoice_number, '') LIKE ?
+          OR COALESCE(s.chassis_number, '') LIKE ?
+          OR COALESCE(s.engine_number, '') LIKE ?
+          OR COALESCE(vs.application_number, '') LIKE ?
+          OR COALESCE(vs.rto_number, '') LIKE ?
         )
       `;
-      params.push(like, like, like, like, like, like, like, like);
+      const like = `%${search}%`;
+      params.push(like, like, like, like, like, like, like);
     }
 
-    sql += ` ORDER BY cv.created_at DESC, cv.id DESC LIMIT 300`;
+    const baseFrom = `
+      FROM sales s
+      LEFT JOIN insurance i ON i.sale_id = s.id
+      LEFT JOIN vahan v ON v.sale_id = s.id
+      ${latestSubmissionJoinSql()}
+      ${where}
+    `;
 
-    const [rows] = await db.query(sql, params);
-    return res.json({ success: true, data: rows });
-  } catch (e) {
-    console.error("vehicles listSearch:", e);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-
-// ---------- create ----------
-// POST /api/vehicles
-exports.createVehicle = async (req, res) => {
-  try {
-    const contact_id = Number(req.body?.contact_id);
-    const chassis_number = norm(req.body?.chassis_number);
-    const engine_number = norm(req.body?.engine_number);
-    const model_id = req.body?.model_id ? Number(req.body.model_id) : null;
-    const variant_id = req.body?.variant_id ? Number(req.body.variant_id) : null;
-    const vehicle_make = safeText(req.body?.vehicle_make);
-    const vehicle_model = safeText(req.body?.vehicle_model);
-    const color = safeText(req.body?.color);
-
-    if (!contact_id) return res.status(400).json({ success: false, message: "contact_id is required" });
-    if (!chassis_number) return res.status(400).json({ success: false, message: "chassis_number is required" });
-    if (!engine_number) return res.status(400).json({ success: false, message: "engine_number is required" });
-
-    const [c] = await db.query(`SELECT id FROM contacts WHERE id=? LIMIT 1`, [contact_id]);
-    if (!c.length) return res.status(400).json({ success: false, message: "Contact not found" });
-
-    const [ins] = await db.query(
-      `INSERT INTO contact_vehicles
-        (contact_id, chassis_number, engine_number, model_id, variant_id, vehicle_make, vehicle_model, color)
-       VALUES (?,?,?,?,?,?,?,?)`,
-      [contact_id, chassis_number, engine_number, model_id || null, variant_id || null, vehicle_make, vehicle_model, color]
+    const [countRows] = await db.query(
+      `SELECT COUNT(*) AS total ${baseFrom}`,
+      params
     );
 
-    return res.status(201).json({ success: true, id: ins.insertId });
+    const [rows] = await db.query(
+      `
+      SELECT
+        s.id AS sale_id,
+        s.sale_date,
+        s.invoice_number,
+        s.customer_name,
+        s.mobile_number,
+        s.vehicle_make,
+        s.vehicle_model,
+        s.chassis_number,
+        s.engine_number,
+        CASE
+          WHEN i.id IS NOT NULL
+            OR COALESCE(s.insurance_number, '') <> ''
+            OR COALESCE(s.insurance_company, '') <> ''
+          THEN 1 ELSE 0
+        END AS insurance_done,
+        CASE
+          WHEN v.current_status = 'completed' OR COALESCE(v.is_completed, 0) = 1
+            THEN 'completed'
+          WHEN (
+            i.id IS NOT NULL
+            OR COALESCE(s.insurance_number, '') <> ''
+            OR COALESCE(s.insurance_company, '') <> ''
+          ) AND (vs.application_number IS NULL OR vs.application_number = '')
+            THEN 'ready_for_vahan'
+          WHEN COALESCE(vs.payment_done, 0) = 1
+            THEN 'payment_done'
+          WHEN vs.application_number IS NOT NULL AND vs.application_number <> ''
+            THEN 'payment_pending'
+          ELSE COALESCE(v.current_status, 'pending_insurance')
+        END AS current_status,
+        v.is_completed,
+        vs.id AS submission_id,
+        vs.application_number,
+        vs.vahan_fill_date,
+        vs.payment_amount,
+        COALESCE(vs.payment_done, 0) AS payment_done,
+        vs.vahan_payment_date,
+        vs.rto_number,
+        COALESCE(vs.penalty_due, 0) AS penalty_due,
+        vs.penalty_amount,
+        vs.remarks
+      ${baseFrom}
+      ORDER BY s.sale_date DESC, s.id DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...params, limit, offset]
+    );
+
+    return res.json({
+      success: true,
+      data: rows,
+      pagination: {
+        page,
+        limit,
+        total: Number(countRows?.[0]?.total || 0),
+        totalPages: Math.ceil(Number(countRows?.[0]?.total || 0) / limit),
+      },
+    });
   } catch (e) {
-    console.error("createVehicle:", e);
-    if (String(e?.code) === "ER_DUP_ENTRY") {
-      return res.status(409).json({
-        success: false,
-        message: "Duplicate chassis/engine found. This vehicle already exists.",
-      });
-    }
-    if (String(e?.code) === "ER_BAD_FIELD_ERROR") {
-      return res.status(500).json({
-        success: false,
-        message:
-          "Backend expects contact_vehicles.color column. Run: ALTER TABLE contact_vehicles ADD COLUMN color VARCHAR(50) NULL AFTER vehicle_model;",
-      });
-    }
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error("vahan listVahan:", e);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to load Vahan list" });
   }
 };
 
-// ---------- import template ----------
-exports.downloadImportTemplate = async (req, res) => {
+// GET /api/vahan/dashboard-summary
+exports.dashboardSummary = async (req, res) => {
+  try {
+    const fromDate = sqlDate(req.query.from_date);
+    const toDate = sqlDate(req.query.to_date);
+
+    let dateFilter = "";
+    const dateParams = [];
+
+    if (fromDate) {
+      dateFilter += ` AND DATE(s.sale_date) >= ? `;
+      dateParams.push(fromDate);
+    }
+
+    if (toDate) {
+      dateFilter += ` AND DATE(s.sale_date) <= ? `;
+      dateParams.push(toDate);
+    }
+
+    const [[pendingFillRows], [pendingPaymentRows], [paidRows], [completedRows]] =
+      await Promise.all([
+        db.query(
+          `
+          SELECT COUNT(*) AS count
+          FROM sales s
+          LEFT JOIN insurance i ON i.sale_id = s.id
+          LEFT JOIN vahan v ON v.sale_id = s.id
+          ${latestSubmissionJoinSql()}
+          WHERE s.is_cancelled = 0
+            AND (
+              i.id IS NOT NULL
+              OR COALESCE(s.insurance_number, '') <> ''
+              OR COALESCE(s.insurance_company, '') <> ''
+            )
+            AND (vs.application_number IS NULL OR vs.application_number = '')
+            ${dateFilter}
+          `,
+          dateParams
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS count
+          FROM sales s
+          LEFT JOIN insurance i ON i.sale_id = s.id
+          ${latestSubmissionJoinSql()}
+          WHERE s.is_cancelled = 0
+            AND (
+              i.id IS NOT NULL
+              OR COALESCE(s.insurance_number, '') <> ''
+              OR COALESCE(s.insurance_company, '') <> ''
+            )
+            AND vs.application_number IS NOT NULL
+            AND vs.application_number <> ''
+            AND COALESCE(vs.payment_done, 0) = 0
+            ${dateFilter}
+          `,
+          dateParams
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS count
+          FROM sales s
+          LEFT JOIN insurance i ON i.sale_id = s.id
+          ${latestSubmissionJoinSql()}
+          WHERE s.is_cancelled = 0
+            AND (
+              i.id IS NOT NULL
+              OR COALESCE(s.insurance_number, '') <> ''
+              OR COALESCE(s.insurance_company, '') <> ''
+            )
+            AND COALESCE(vs.payment_done, 0) = 1
+            ${dateFilter}
+          `,
+          dateParams
+        ),
+        db.query(
+          `
+          SELECT COUNT(*) AS count
+          FROM sales s
+          LEFT JOIN insurance i ON i.sale_id = s.id
+          LEFT JOIN vahan v ON v.sale_id = s.id
+          WHERE s.is_cancelled = 0
+            AND (
+              i.id IS NOT NULL
+              OR COALESCE(s.insurance_number, '') <> ''
+              OR COALESCE(s.insurance_company, '') <> ''
+            )
+            AND v.current_status = 'completed'
+            ${dateFilter}
+          `,
+          dateParams
+        ),
+      ]);
+
+    const pendingFill = Number(pendingFillRows?.[0]?.count || 0);
+    const pendingPayment = Number(pendingPaymentRows?.[0]?.count || 0);
+    const paid = Number(paidRows?.[0]?.count || 0);
+    const completed = Number(completedRows?.[0]?.count || 0);
+
+    return res.json({
+      success: true,
+      pending_fill: pendingFill,
+      pending_payment: pendingPayment,
+      paid,
+      unpaid: pendingFill + pendingPayment,
+      completed,
+    });
+  } catch (e) {
+    console.error("vahan dashboardSummary:", e);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to load dashboard summary" });
+  }
+};
+
+// GET /api/vahan/export
+exports.exportVahan = async (req, res) => {
   try {
     const ExcelJS = loadExcelJSOrThrow();
+    const search = String(req.query.search || "").trim();
+    const tab = String(req.query.tab || "all").trim();
+    const fromDate = sqlDate(req.query.from_date);
+    const toDate = sqlDate(req.query.to_date);
+
+    let where = `
+      WHERE s.is_cancelled = 0
+        AND (
+          i.id IS NOT NULL
+          OR COALESCE(s.insurance_number, '') <> ''
+          OR COALESCE(s.insurance_company, '') <> ''
+        )
+    `;
+    const params = [];
+
+    where += buildTabCondition(tab);
+
+    if (fromDate) {
+      where += ` AND DATE(s.sale_date) >= ? `;
+      params.push(fromDate);
+    }
+
+    if (toDate) {
+      where += ` AND DATE(s.sale_date) <= ? `;
+      params.push(toDate);
+    }
+
+    if (search) {
+      where += `
+        AND (
+          COALESCE(s.customer_name, '') LIKE ?
+          OR COALESCE(s.mobile_number, '') LIKE ?
+          OR COALESCE(s.invoice_number, '') LIKE ?
+          OR COALESCE(s.chassis_number, '') LIKE ?
+          OR COALESCE(s.engine_number, '') LIKE ?
+          OR COALESCE(vs.application_number, '') LIKE ?
+          OR COALESCE(vs.rto_number, '') LIKE ?
+        )
+      `;
+      const like = `%${search}%`;
+      params.push(like, like, like, like, like, like, like);
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        s.id AS sale_id,
+        s.sale_date,
+        s.invoice_number,
+        s.customer_name,
+        s.mobile_number,
+        s.vehicle_make,
+        s.vehicle_model,
+        s.chassis_number,
+        s.engine_number,
+        CASE
+          WHEN i.id IS NOT NULL
+            OR COALESCE(s.insurance_number, '') <> ''
+            OR COALESCE(s.insurance_company, '') <> ''
+          THEN 1 ELSE 0
+        END AS insurance_done,
+        CASE
+          WHEN v.current_status = 'completed' OR COALESCE(v.is_completed, 0) = 1
+            THEN 'completed'
+          WHEN (
+            i.id IS NOT NULL
+            OR COALESCE(s.insurance_number, '') <> ''
+            OR COALESCE(s.insurance_company, '') <> ''
+          ) AND (vs.application_number IS NULL OR vs.application_number = '')
+            THEN 'ready_for_vahan'
+          WHEN COALESCE(vs.payment_done, 0) = 1
+            THEN 'payment_done'
+          WHEN vs.application_number IS NOT NULL AND vs.application_number <> ''
+            THEN 'payment_pending'
+          ELSE COALESCE(v.current_status, 'pending_insurance')
+        END AS current_status,
+        vs.application_number,
+        vs.vahan_fill_date,
+        vs.payment_amount,
+        COALESCE(vs.payment_done, 0) AS payment_done,
+        vs.vahan_payment_date,
+        vs.rto_number,
+        COALESCE(vs.penalty_due, 0) AS penalty_due,
+        vs.penalty_amount,
+        vs.remarks
+      FROM sales s
+      LEFT JOIN insurance i ON i.sale_id = s.id
+      LEFT JOIN vahan v ON v.sale_id = s.id
+      ${latestSubmissionJoinSql()}
+      ${where}
+      ORDER BY s.sale_date DESC, s.id DESC
+      `,
+      params
+    );
+
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Vehicles");
+    const ws = wb.addWorksheet("Vahan");
 
     ws.columns = [
-      { header: "contact_id*", key: "contact_id", width: 12 },
-      { header: "model_name", key: "model_name", width: 20 },
-      { header: "variant_name", key: "variant_name", width: 20 },
-      { header: "vehicle_make", key: "vehicle_make", width: 14 },
-      { header: "vehicle_model (text)", key: "vehicle_model", width: 20 },
-      { header: "color", key: "color", width: 12 },
-      { header: "chassis_number*", key: "chassis_number", width: 18 },
-      { header: "engine_number*", key: "engine_number", width: 18 },
+      { header: "Sale ID", key: "sale_id", width: 10 },
+      { header: "Sale Date", key: "sale_date", width: 14 },
+      { header: "Invoice No", key: "invoice_number", width: 18 },
+      { header: "Customer Name", key: "customer_name", width: 24 },
+      { header: "Mobile", key: "mobile_number", width: 16 },
+      { header: "Vehicle Make", key: "vehicle_make", width: 16 },
+      { header: "Vehicle Model", key: "vehicle_model", width: 24 },
+      { header: "Chassis No", key: "chassis_number", width: 24 },
+      { header: "Engine No", key: "engine_number", width: 24 },
+      { header: "Insurance Done", key: "insurance_done", width: 14 },
+      { header: "Status", key: "current_status", width: 18 },
+      { header: "Application No", key: "application_number", width: 18 },
+      { header: "Fill Date", key: "vahan_fill_date", width: 14 },
+      { header: "Payment Amount", key: "payment_amount", width: 16 },
+      { header: "Payment Done", key: "payment_done", width: 14 },
+      { header: "Payment Date", key: "vahan_payment_date", width: 14 },
+      { header: "RTO Number", key: "rto_number", width: 18 },
+      { header: "Penalty Due", key: "penalty_due", width: 12 },
+      { header: "Penalty Amount", key: "penalty_amount", width: 16 },
+      { header: "Remarks", key: "remarks", width: 30 },
     ];
 
-    ws.addRow({
-      contact_id: 1,
-      model_name: "Splendor Plus",
-      variant_name: "i3S",
-      vehicle_make: "Hero",
-      vehicle_model: "Splendor Plus i3S",
-      color: "Black",
-      chassis_number: "CH123456789",
-      engine_number: "EN987654321",
+    rows.forEach((r) => {
+      ws.addRow({
+        ...r,
+        insurance_done: Number(r.insurance_done || 0) ? "Yes" : "No",
+        payment_done: Number(r.payment_done || 0) ? "Yes" : "No",
+        penalty_due: Number(r.penalty_due || 0) ? "Yes" : "No",
+      });
     });
 
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="vehicles_import_template.xlsx"`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="vahan_export.xlsx"'
+    );
     await wb.xlsx.write(res);
-    res.end();
+    return res.end();
   } catch (e) {
-    console.error("vehicles downloadImportTemplate:", e);
-    if (e?._isExcelMissing) return res.status(500).json({ success: false, message: e.message });
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error("vahan exportVahan:", e);
+    if (e?._isExcelMissing) {
+      return res.status(500).json({ success: false, message: e.message });
+    }
+    return res.status(500).json({ success: false, message: "Export failed" });
   }
 };
 
-// ---------- import ----------
-exports.importVehiclesExcel = [
-  (req, res, next) => exports._uploadMiddleware(req, res, next),
-  async (req, res) => {
-    const conn = await db.getConnection();
-    try {
-      const ExcelJS = loadExcelJSOrThrow();
-      if (!req.file?.buffer) return res.status(400).json({ success: false, message: "File is required" });
+// GET /api/vahan/:sale_id
+exports.getVahan = async (req, res) => {
+  try {
+    const saleId = toInt(req.params.sale_id);
+    if (!saleId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid sale_id" });
+    }
 
-      const wb = new ExcelJS.Workbook();
-      await wb.xlsx.load(req.file.buffer);
-      const ws = wb.worksheets[0];
-      if (!ws) return res.status(400).json({ success: false, message: "Invalid Excel file" });
+    await ensureVahanRow(saleId, req.user?.id);
 
-      const [models] = await db.query(`SELECT id, model_name FROM vehicle_models WHERE is_active=1`);
-      const modelMap = new Map(models.map((m) => [String(m.model_name).toLowerCase(), m.id]));
+    const sale = await getSaleById(saleId);
+    const [vahanRows] = await db.query(
+      `SELECT * FROM vahan WHERE sale_id = ? LIMIT 1`,
+      [saleId]
+    );
+    const [subRows] = await db.query(
+      `SELECT * FROM vahan_submission WHERE sale_id = ? ORDER BY id DESC LIMIT 1`,
+      [saleId]
+    );
 
-      const [variants] = await db.query(
-        `SELECT v.id, v.variant_name, v.model_id FROM vehicle_variants v WHERE v.is_active=1`
-      );
-      const variantMap = new Map(
-        variants.map((v) => [`${v.model_id}::${String(v.variant_name).toLowerCase()}`, v.id])
-      );
+    return res.json({
+      success: true,
+      sale,
+      vahan: vahanRows[0] || null,
+      submission: subRows[0] || null,
+    });
+  } catch (e) {
+    console.error("vahan getVahan:", e);
+    return res.status(e.status || 500).json({
+      success: false,
+      message: e.message || "Failed to load Vahan details",
+    });
+  }
+};
 
-      const header = {};
-      ws.getRow(1).eachCell((cell, colNumber) => {
-        header[String(cell.value || "").trim().toLowerCase()] = colNumber;
-      });
+// POST /api/vahan
+exports.createVahan = async (req, res) => {
+  try {
+    const saleId = toInt(req.body.sale_id);
+    if (!saleId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "sale_id is required" });
+    }
 
-      const get = (row, key) => {
-        const col = header[key];
-        if (!col) return "";
-        return String(row.getCell(col).value || "").trim();
-      };
+    await ensureVahanRow(saleId, req.user?.id);
 
-      let inserted = 0;
-      const errors = [];
+    const applicationNumber =
+      cleanText(req.body.application_number) ||
+      cleanText(req.body.application_no);
 
-      for (let r = 2; r <= ws.rowCount; r++) {
-        const row = ws.getRow(r);
-        const contact_id = Number(get(row, "contact_id*") || get(row, "contact_id"));
-        const model_name = get(row, "model_name");
-        const variant_name = get(row, "variant_name");
-        const vehicle_make = safeText(get(row, "vehicle_make"));
-        const vehicle_model = safeText(get(row, "vehicle_model (text)") || get(row, "vehicle_model"));
-        const color = safeText(get(row, "color"));
-        const chassis_number = norm(get(row, "chassis_number*") || get(row, "chassis_number"));
-        const engine_number = norm(get(row, "engine_number*") || get(row, "engine_number"));
+    const fillDate =
+      sqlDate(req.body.vahan_fill_date) ||
+      sqlDate(req.body.application_filled_date) ||
+      null;
 
-        if (!contact_id || !chassis_number || !engine_number) continue;
+    const paymentAmount = req.body.payment_amount ?? null;
 
-        const [c] = await db.query(`SELECT id FROM contacts WHERE id=? LIMIT 1`, [contact_id]);
-        if (!c.length) {
-          errors.push(`Row ${r}: contact_id not found`);
-          continue;
-        }
+    const oldStatus = String(req.body.status || "").trim().toLowerCase();
+    const oldCompletedDate = sqlDate(req.body.completed_date);
 
-        let model_id = null;
-        let variant_id = null;
-        if (model_name) model_id = modelMap.get(String(model_name).toLowerCase()) || null;
-        if (model_id && variant_name) {
-          variant_id = variantMap.get(`${model_id}::${String(variant_name).toLowerCase()}`) || null;
-        }
+    let paymentDone = yn(req.body.payment_done);
+    let paymentDate =
+      sqlDate(req.body.vahan_payment_date) || sqlDate(req.body.payment_date);
+    let rtoNumber = cleanText(req.body.rto_number);
 
-        await conn.beginTransaction();
-        try {
-          await conn.query(
-            `INSERT INTO contact_vehicles
-              (contact_id, chassis_number, engine_number, model_id, variant_id, vehicle_make, vehicle_model, color)
-             VALUES (?,?,?,?,?,?,?,?)`,
-            [contact_id, chassis_number, engine_number, model_id, variant_id, vehicle_make, vehicle_model, color]
-          );
-          await conn.commit();
-          inserted++;
-        } catch (e) {
-          try { await conn.rollback(); } catch {}
-          if (String(e?.code) === "ER_DUP_ENTRY") errors.push(`Row ${r}: duplicate chassis/engine`);
-          else errors.push(`Row ${r}: ${e?.message || "error"}`);
+    if (oldStatus === "done") {
+      paymentDone = 1;
+      paymentDate =
+        paymentDate || oldCompletedDate || new Date().toISOString().slice(0, 10);
+    }
+
+    if (fillDate) {
+      const fillDateObj = asDateOnly(fillDate);
+      const todayObj = asDateOnly(todaySqlDate());
+      if (!fillDateObj) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid fill date" });
+      }
+      if (fillDateObj > todayObj) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Fill date cannot be in the future" });
+      }
+    }
+
+    if (paymentDone === 1 && paymentDate) {
+      const paymentDateObj = asDateOnly(paymentDate);
+      const todayObj = asDateOnly(todaySqlDate());
+
+      if (!paymentDateObj) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid payment date" });
+      }
+
+      if (fillDate) {
+        const fillDateObj = asDateOnly(fillDate);
+        if (fillDateObj && paymentDateObj < fillDateObj) {
+          return res.status(400).json({
+            success: false,
+            message: "Payment date cannot be before fill date",
+          });
         }
       }
 
-      return res.json({ success: true, inserted, errors });
-    } catch (e) {
-      console.error("vehicles import:", e);
-      if (e?._isExcelMissing) return res.status(500).json({ success: false, message: e.message });
-      return res.status(500).json({ success: false, message: "Server error" });
-    } finally {
-      conn.release();
+      if (paymentDateObj > todayObj) {
+        return res.status(400).json({
+          success: false,
+          message: "Payment date cannot be in the future",
+        });
+      }
     }
-  },
-];
 
-// ---------- export ----------
-// GET /api/vehicles/_export?q=
-exports.exportVehiclesExcel = async (req, res) => {
-  try {
-    const ExcelJS = loadExcelJSOrThrow();
-    const q = String(req.query.q || "").trim();
-    const like = `%${q}%`;
+    await db.query(
+      `
+      INSERT INTO vahan_submission
+        (sale_id, application_number, vahan_filled_by, vahan_fill_date, payment_amount, payment_done, vahan_payment_date, rto_number, remarks)
+      VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        saleId,
+        applicationNumber,
+        req.user?.id || null,
+        fillDate,
+        paymentAmount,
+        paymentDone,
+        paymentDate,
+        rtoNumber,
+        cleanText(req.body.remarks),
+      ]
+    );
 
-    let sql = `
-      SELECT
-        cv.id,
-        cv.contact_id,
-        vm.model_name,
-        vv.variant_name,
-        cv.vehicle_make,
-        cv.vehicle_model,
-        cv.color,
-        cv.chassis_number,
-        cv.engine_number,
-        cv.created_at
-      FROM contact_vehicles cv
-      LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
-      LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
-      WHERE 1=1
-    `;
-    const params = [];
-    if (q) {
-      sql += `
-        AND (
-          cv.chassis_number LIKE ?
-          OR cv.engine_number LIKE ?
-          OR COALESCE(vm.model_name,'') LIKE ?
-          OR COALESCE(vv.variant_name,'') LIKE ?
-          OR COALESCE(cv.vehicle_make,'') LIKE ?
-          OR COALESCE(cv.vehicle_model,'') LIKE ?
-          OR COALESCE(cv.color,'') LIKE ?
-          OR CAST(cv.contact_id AS CHAR) LIKE ?
-        )
-      `;
-      params.push(like, like, like, like, like, like, like, like);
+    await computeAndSaveStatus(saleId, req.user?.id);
+
+    if (paymentDone === 1) {
+      await db.query(
+        `UPDATE vahan SET current_status = 'payment_done', last_updated_by = ?, last_updated_at = NOW() WHERE sale_id = ?`,
+        [req.user?.id || null, saleId]
+      );
     }
-    sql += ` ORDER BY cv.created_at DESC, cv.id DESC LIMIT 5000`;
 
-    const [rows] = await db.query(sql, params);
-
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Vehicles");
-
-    ws.columns = [
-      { header: "id", key: "id", width: 10 },
-      { header: "contact_id", key: "contact_id", width: 12 },
-      { header: "model_name", key: "model_name", width: 20 },
-      { header: "variant_name", key: "variant_name", width: 20 },
-      { header: "vehicle_make", key: "vehicle_make", width: 14 },
-      { header: "vehicle_model", key: "vehicle_model", width: 20 },
-      { header: "color", key: "color", width: 12 },
-      { header: "chassis_number", key: "chassis_number", width: 18 },
-      { header: "engine_number", key: "engine_number", width: 18 },
-      { header: "created_at", key: "created_at", width: 22 },
-    ];
-
-    rows.forEach((r) => ws.addRow(r));
-
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="vehicles_export.xlsx"`);
-    await wb.xlsx.write(res);
-    res.end();
+    return res.json({ success: true, message: "Vahan record created" });
   } catch (e) {
-    console.error("vehicles export:", e);
-    if (e?._isExcelMissing) return res.status(500).json({ success: false, message: e.message });
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error("vahan createVahan:", e);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to create Vahan record" });
+  }
+};
+
+// PUT /api/vahan/:sale_id/form
+exports.saveForm = async (req, res) => {
+  try {
+    const saleId = toInt(req.params.sale_id);
+    if (!saleId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid sale_id" });
+    }
+
+    const applicationNumber = cleanText(req.body.application_number);
+    const fillDate = sqlDate(
+      req.body.vahan_fill_date || req.body.application_filled_date
+    );
+    const paymentAmount = req.body.payment_amount ?? null;
+
+    if (!applicationNumber) {
+      return res
+        .status(400)
+        .json({ success: false, message: "application_number is required" });
+    }
+
+    if (!fillDate) {
+      return res
+        .status(400)
+        .json({ success: false, message: "vahan_fill_date is required" });
+    }
+
+    const fillDateObj = asDateOnly(fillDate);
+    const todayObj = asDateOnly(todaySqlDate());
+
+    if (!fillDateObj) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid fill date" });
+    }
+
+    if (fillDateObj > todayObj) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Fill date cannot be in the future" });
+    }
+
+    await ensureVahanRow(saleId, req.user?.id);
+
+    const [existing] = await db.query(
+      `SELECT id FROM vahan_submission WHERE sale_id = ? ORDER BY id DESC LIMIT 1`,
+      [saleId]
+    );
+
+    if (existing.length) {
+      await db.query(
+        `
+        UPDATE vahan_submission
+        SET
+          application_number = ?,
+          vahan_filled_by = ?,
+          vahan_fill_date = ?,
+          payment_amount = ?
+        WHERE id = ?
+        `,
+        [
+          applicationNumber,
+          req.user?.id || null,
+          fillDate,
+          paymentAmount,
+          existing[0].id,
+        ]
+      );
+    } else {
+      await db.query(
+        `
+        INSERT INTO vahan_submission
+          (sale_id, application_number, vahan_filled_by, vahan_fill_date, payment_amount)
+        VALUES (?, ?, ?, ?, ?)
+        `,
+        [saleId, applicationNumber, req.user?.id || null, fillDate, paymentAmount]
+      );
+    }
+
+    await db.query(
+      `
+      UPDATE vahan
+      SET
+        current_status = 'payment_pending',
+        is_completed = 0,
+        last_updated_by = ?,
+        last_updated_at = NOW()
+      WHERE sale_id = ?
+      `,
+      [req.user?.id || null, saleId]
+    );
+
+    return res.json({ success: true, message: "Application saved" });
+  } catch (e) {
+    console.error("vahan saveForm:", e);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to save application" });
+  }
+};
+
+// PUT /api/vahan/:sale_id/payment
+exports.savePayment = async (req, res) => {
+  try {
+    const saleId = toInt(req.params.sale_id);
+    if (!saleId) {
+      return res.status(400).json({ success: false, message: "Invalid sale_id" });
+    }
+
+    const paymentDate = sqlDate(
+      req.body.vahan_payment_date || req.body.payment_date
+    );
+    const rtoNumber = cleanText(req.body.rto_number);
+    const remarks = cleanText(req.body.remarks);
+
+    if (!paymentDate) {
+      return res.status(400).json({
+        success: false,
+        message: "payment date is required",
+      });
+    }
+
+    if (!rtoNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "rto_number is required",
+      });
+    }
+
+    const sale = await getSaleById(saleId);
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: "Sale not found",
+      });
+    }
+
+    const [existing] = await db.query(
+      `SELECT * FROM vahan_submission WHERE sale_id = ? ORDER BY id DESC LIMIT 1`,
+      [saleId]
+    );
+
+    if (!existing.length || !existing[0].application_number) {
+      return res.status(400).json({
+        success: false,
+        message: "First save application details, then mark payment done",
+      });
+    }
+
+    const fillDate = sqlDate(existing[0].vahan_fill_date);
+    const fillDateObj = asDateOnly(fillDate);
+    const paymentDateObj = asDateOnly(paymentDate);
+    const saleDateObj = asDateOnly(sale.sale_date);
+    const todayObj = asDateOnly(todaySqlDate());
+
+    if (!paymentDateObj) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment date",
+      });
+    }
+
+    if (fillDate && !fillDateObj) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid fill date in saved application",
+      });
+    }
+
+    if (!saleDateObj) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid sale date",
+      });
+    }
+
+    if (fillDateObj && paymentDateObj < fillDateObj) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment date cannot be before fill date",
+      });
+    }
+
+    if (paymentDateObj > todayObj) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment date cannot be in the future",
+      });
+    }
+
+    // Business rule kept exactly:
+    // Sale 1 Jan => no penalty on 1 to 7 Jan
+    // Penalty starts on 8 Jan and after 8 Jan
+    const penaltyStartDateObj = new Date(saleDateObj);
+    penaltyStartDateObj.setDate(penaltyStartDateObj.getDate() + 7);
+
+    const penaltyDue = paymentDateObj >= penaltyStartDateObj ? 1 : 0;
+
+    let penaltyAmount = req.body.penalty_amount;
+    if (
+      penaltyAmount === "" ||
+      penaltyAmount === undefined ||
+      penaltyAmount === null
+    ) {
+      penaltyAmount = 0;
+    } else {
+      const n = Number(penaltyAmount);
+      penaltyAmount = Number.isFinite(n) ? n : 0;
+    }
+
+    const penaltyStartDate = formatDateOnly(penaltyStartDateObj);
+
+    await db.query(
+      `
+      UPDATE vahan_submission
+      SET
+        payment_done = 1,
+        vahan_payment_date = ?,
+        rto_number = ?,
+        penalty_due = ?,
+        penalty_amount = ?,
+        remarks = ?
+      WHERE id = ?
+      `,
+      [
+        paymentDate,
+        rtoNumber,
+        penaltyDue,
+        penaltyAmount,
+        remarks,
+        existing[0].id,
+      ]
+    );
+
+    await db.query(
+      `
+      UPDATE vahan
+      SET
+        current_status = 'payment_done',
+        is_completed = 0,
+        last_updated_by = ?,
+        last_updated_at = NOW()
+      WHERE sale_id = ?
+      `,
+      [req.user?.id || null, saleId]
+    );
+
+    return res.json({
+      success: true,
+      message: penaltyDue
+        ? "Payment saved. Penalty is applicable."
+        : "Payment saved. No penalty.",
+      penalty_due: penaltyDue,
+      penalty_amount: penaltyAmount,
+      penalty_start_date: penaltyStartDate,
+    });
+  } catch (e) {
+    console.error("vahan savePayment:", e);
+    return res.status(500).json({
+      success: false,
+      message: e?.sqlMessage || e?.message || "Failed to save payment",
+    });
+  }
+};
+
+// POST /api/vahan/:sale_id/complete
+exports.completeVahan = async (req, res) => {
+  try {
+    const saleId = toInt(req.params.sale_id);
+    if (!saleId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid sale_id" });
+    }
+
+    const [subRows] = await db.query(
+      `SELECT * FROM vahan_submission WHERE sale_id = ? ORDER BY id DESC LIMIT 1`,
+      [saleId]
+    );
+
+    if (!subRows.length || Number(subRows[0].payment_done || 0) !== 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment must be completed before marking Vahan completed",
+      });
+    }
+
+    await db.query(
+      `
+      UPDATE vahan
+      SET
+        current_status = 'completed',
+        is_completed = 1,
+        last_updated_by = ?,
+        last_updated_at = NOW()
+      WHERE sale_id = ?
+      `,
+      [req.user?.id || null, saleId]
+    );
+
+    return res.json({ success: true, message: "Vahan marked completed" });
+  } catch (e) {
+    console.error("vahan completeVahan:", e);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to complete Vahan" });
+  }
+};
+
+// PUT /api/vahan/:sale_id
+exports.updateVahan = async (req, res) => {
+  try {
+    const saleId = toInt(req.params.sale_id);
+    if (!saleId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid sale_id" });
+    }
+
+    req.body.sale_id = saleId;
+
+    if (
+      req.body.status === "done" ||
+      yn(req.body.payment_done) === 1 ||
+      req.body.vahan_payment_date ||
+      req.body.payment_date
+    ) {
+      await exports.createVahan(req, res);
+      return;
+    }
+
+    await exports.saveForm(req, res);
+  } catch (e) {
+    console.error("vahan updateVahan:", e);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to update Vahan" });
+  }
+};
+
+// DELETE /api/vahan/:sale_id
+exports.deleteVahan = async (req, res) => {
+  try {
+    const saleId = toInt(req.params.sale_id);
+    if (!saleId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid sale_id" });
+    }
+
+    await db.query(`DELETE FROM vahan_submission WHERE sale_id = ?`, [saleId]);
+    await db.query(`DELETE FROM vahan WHERE sale_id = ?`, [saleId]);
+
+    return res.json({ success: true, message: "Vahan deleted" });
+  } catch (e) {
+    console.error("vahan deleteVahan:", e);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to delete Vahan" });
   }
 };

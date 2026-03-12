@@ -7,7 +7,6 @@ exports.getDashboardMetrics = async (req, res) => {
   try {
     const role = String(req.user?.role || "").toLowerCase();
 
-    // 1) Fetch visible metrics for this role
     const [permissions] = await db.query(
       `
       SELECT metric_key
@@ -19,14 +18,14 @@ exports.getDashboardMetrics = async (req, res) => {
 
     let allowedMetrics = permissions.map((p) => p.metric_key);
 
-    // ✅ Owner/admin fallback: show all metrics even if permissions table is empty
     if ((role === "owner" || role === "admin") && allowedMetrics.length === 0) {
       allowedMetrics = [
         "total_sales",
         "pending_insurance",
         "pending_rc",
         "pending_hsrp",
-        "pending_vahan",
+        "pending_vahan_fill",
+        "pending_vahan_payment",
         "renewals_due",
       ];
     }
@@ -35,13 +34,13 @@ exports.getDashboardMetrics = async (req, res) => {
       return res.json({});
     }
 
-    // 2) Compute all metrics
     const [
       [totalSales],
       [pendingInsurance],
       [pendingRC],
       [pendingHSRP],
-      [pendingVahan],
+      [pendingVahanFill],
+      [pendingVahanPayment],
       [renewalsDue],
     ] = await Promise.all([
       db.query(`SELECT COUNT(*) AS count FROM sales WHERE is_cancelled = 0`),
@@ -73,9 +72,21 @@ exports.getDashboardMetrics = async (req, res) => {
       db.query(`
         SELECT COUNT(*) AS count
         FROM sales s
-        LEFT JOIN vahan_submission vs ON s.id = vs.sale_id
+        LEFT JOIN vahan v ON v.sale_id = s.id
+        LEFT JOIN vahan_submission vs ON vs.sale_id = s.id
         WHERE s.is_cancelled = 0
-          AND vs.id IS NULL
+          AND COALESCE(v.insurance_done, 0) = 1
+          AND (vs.application_number IS NULL OR vs.application_number = '')
+      `),
+
+      db.query(`
+        SELECT COUNT(*) AS count
+        FROM sales s
+        LEFT JOIN vahan_submission vs ON vs.sale_id = s.id
+        WHERE s.is_cancelled = 0
+          AND vs.application_number IS NOT NULL
+          AND vs.application_number <> ''
+          AND COALESCE(vs.payment_done, 0) = 0
       `),
 
       db.query(`
@@ -90,7 +101,8 @@ exports.getDashboardMetrics = async (req, res) => {
       pending_insurance: Number(pendingInsurance?.[0]?.count || 0),
       pending_rc: Number(pendingRC?.[0]?.count || 0),
       pending_hsrp: Number(pendingHSRP?.[0]?.count || 0),
-      pending_vahan: Number(pendingVahan?.[0]?.count || 0),
+      pending_vahan_fill: Number(pendingVahanFill?.[0]?.count || 0),
+      pending_vahan_payment: Number(pendingVahanPayment?.[0]?.count || 0),
       renewals_due: Number(renewalsDue?.[0]?.count || 0),
     };
 

@@ -15,7 +15,6 @@ export default function Sidebar() {
   const isOwnerAdminManager = isOwnerAdmin || role === "manager";
 
   const logout = () => {
-    // ✅ remove BOTH keys
     localStorage.removeItem("token");
     localStorage.removeItem("showroom_token");
     window.location.href = "/login";
@@ -38,42 +37,45 @@ export default function Sidebar() {
       isActive(href) ? "bg-red-500/80" : ""
     }`;
 
-  // ✅ allow owner/admin even if my-permissions doesn’t list keys
   const canInsurance = isOwnerAdmin || hasPermission("add_insurance");
   const canWhatsappLogs = isOwnerAdmin || hasPermission("view_whatsapp_logs");
   const canWhatsappSettings =
     isOwnerAdmin || hasPermission("manage_whatsapp_settings");
 
-  // ✅ Purchases (safe defaults)
-  // If you already have a permission key, keep it here.
- const canPurchases =
-  isOwnerAdmin || hasPermission("view_purchases") || hasPermission("manage_purchases");
+  const canPurchases =
+    isOwnerAdmin ||
+    hasPermission("view_purchases") ||
+    hasPermission("manage_purchases");
 
-  // ✅ Admin section permissions
-const canPermissions = isOwnerAdminManager || hasPermission("manage_permissions");
-const canDropdowns = isOwnerAdminManager || hasPermission("manage_dropdowns");
+  // ✅ VAHAN visible only if owner/admin or permission granted from UI
+  const canVahan = isOwnerAdmin || hasPermission("vahan_access");
 
-  // show Users section if any admin tools are available
-const canAdminSection = isOwnerAdminManager || canPermissions || canDropdowns;
+  const canPermissions =
+    isOwnerAdminManager || hasPermission("manage_permissions");
+  const canDropdowns =
+    isOwnerAdminManager || hasPermission("manage_dropdowns");
+
+  const canAdminSection = isOwnerAdminManager || canPermissions || canDropdowns;
+
   const isAdminUsersSectionActive =
     isActive("/admin/users") ||
     isActive("/admin/active-users") ||
     isActive("/admin/access-window") ||
     isActive("/admin/permissions") ||
-    isActive("/admin/dropdowns"); // ✅ NEW
+    isActive("/admin/dropdowns");
 
   const usersParentClass = `block px-3 py-2 rounded hover:bg-red-500 ${
     isAdminUsersSectionActive ? "bg-red-500" : ""
   }`;
 
   return (
-<aside className="w-64 bg-red-600 text-white h-screen flex flex-col">
+    <aside className="w-64 bg-red-600 text-white h-screen flex flex-col">
       <div className="p-4 border-b border-red-500">
         <h1 className="text-xl font-bold">GUPTA AUTO AGENCY</h1>
         <p className="text-sm opacity-90">Hero MotoCorp</p>
       </div>
 
-<nav className="flex-1 min-h-0 p-4 space-y-2 overflow-y-auto">
+      <nav className="flex-1 min-h-0 p-4 space-y-2 overflow-y-auto">
         <Link href="/dashboard" className={linkClass("/dashboard")}>
           Dashboard
         </Link>
@@ -94,16 +96,21 @@ const canAdminSection = isOwnerAdminManager || canPermissions || canDropdowns;
           Vehicles
         </Link>
 
-        {/* ✅ NEW: Purchases */}
-      {canPurchases && (
-  <Link href="/purchases" className={linkClass("/purchases")}>
-    Purchases
-  </Link>
-)}
+        {canPurchases && (
+          <Link href="/purchases" className={linkClass("/purchases")}>
+            Purchases
+          </Link>
+        )}
 
         {canInsurance && (
           <Link href="/insurance" className={linkClass("/insurance")}>
             Insurance
+          </Link>
+        )}
+
+        {canVahan && (
+          <Link href="/vahan" className={linkClass("/vahan")}>
+            VAHAN
           </Link>
         )}
 
@@ -130,7 +137,6 @@ const canAdminSection = isOwnerAdminManager || canPermissions || canDropdowns;
           HSRP
         </Link>
 
-        {/* ✅ Admin / Users Section */}
         {canAdminSection && (
           <div className="pt-2">
             <Link href="/admin/users" className={usersParentClass}>
@@ -161,7 +167,6 @@ const canAdminSection = isOwnerAdminManager || canPermissions || canDropdowns;
                 </Link>
               )}
 
-              {/* ✅ NEW: Dropdowns */}
               {canDropdowns && (
                 <Link
                   href="/admin/dropdowns"

@@ -18,7 +18,8 @@ const CARD_LINKS: CardLinkMap = {
   pending_insurance: "/insurance?status=pending",
   pending_rc: "/rc?status=pending",
   pending_hsrp: "/hsrp?status=pending",
-  pending_vahan: "/vahan?status=pending",
+  pending_vahan_fill: "/vahan?tab=pending_fill",
+  pending_vahan_payment: "/vahan?tab=pending_payment",
   renewals_due: "/insurance/renewals?status=due",
 };
 
