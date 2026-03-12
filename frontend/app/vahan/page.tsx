@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import api from "@/lib/api";
 import Link from "next/link";
@@ -60,7 +60,7 @@ function formatDate(value: any) {
   });
 }
 
-export default function VahanPage() {
+function VahanPageInner() {
   const params = useSearchParams();
   const { hasPermission, loading: permissionsLoading } = usePermissions();
 
@@ -396,5 +396,13 @@ export default function VahanPage() {
         )}
       </div>
     </AuthGuard>
+  );
+}
+
+export default function VahanPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen p-6 bg-gray-100">Loading...</div>}>
+      <VahanPageInner />
+    </Suspense>
   );
 }
