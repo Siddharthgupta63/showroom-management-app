@@ -1,4 +1,3 @@
-// backend/routes/pipeline.js
 const express = require("express");
 const router = express.Router();
 
@@ -7,7 +6,7 @@ const pipelineController = require("../controllers/pipelineController");
 
 router.get("/", authMiddleware, pipelineController.listPipeline);
 
-// KPIs: allow anyone who can open pipeline sale (or owner/admin via middleware)
+// KPIs: owner/admin allowed automatically by middleware logic, others need permission
 router.get(
   "/kpis",
   authMiddleware,

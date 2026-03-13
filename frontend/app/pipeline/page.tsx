@@ -157,6 +157,7 @@ function KpiCard({ title, value }: { title: string; value: number }) {
 
 export default function PipelinePage() {
   const [mounted, setMounted] = useState(false);
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -166,12 +167,11 @@ export default function PipelinePage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
-  const [kpis, setKpis] = useState<any>(null);
-  const [kpiErr, setKpiErr] = useState("");
 
   const { hasPermission, loading: permLoading } = usePermissions();
 
   const [user, setUser] = useState<UserLite>(null);
+
   useEffect(() => {
     if (!mounted) return;
     setUser(readUserFromStorage());
@@ -195,6 +195,7 @@ export default function PipelinePage() {
     try {
       setErr("");
       setLoading(true);
+
       const res = await api.get("/api/pipeline", {
         params: query ? { q: query } : {},
       });
@@ -202,11 +203,13 @@ export default function PipelinePage() {
       const data = Array.isArray(res.data)
         ? res.data
         : res.data?.data || res.data?.rows || [];
+
       if (!Array.isArray(data)) {
         setRows([]);
         setErr("Unexpected server response");
         return;
       }
+
       setRows(data);
     } catch (e: any) {
       console.error("PIPELINE API ERROR:", e);
@@ -220,21 +223,8 @@ export default function PipelinePage() {
     }
   };
 
-  const fetchKpis = async () => {
-    try {
-      setKpiErr("");
-      const res = await api.get("/api/pipeline/kpis");
-      const data = res.data?.data || res.data;
-      setKpis(data);
-    } catch (e: any) {
-      setKpis(null);
-      setKpiErr(e?.response?.data?.message || "Failed to load KPIs");
-    }
-  };
-
   useEffect(() => {
     fetchList("");
-    fetchKpis();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -277,22 +267,26 @@ export default function PipelinePage() {
     };
     return c;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows]);
+  }, [rows, mounted]);
 
   const filteredRows = useMemo(() => {
     const base = (rows || []).filter((r) => matchesFilter(r, filter));
+
     const scored = base.map((r) => {
       const info = expiryInfo(r);
       let score = 999999;
+
       if (info.kind === "expired") score = -100000 + (info.daysAgo ?? 0);
       if (info.kind === "due") score = info.daysLeft ?? 0;
       if (info.kind === "ok") score = 1000 + (info.daysLeft ?? 0);
+
       return { r, score };
     });
+
     scored.sort((a, b) => a.score - b.score);
     return scored.map((x) => x.r);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, filter]);
+  }, [rows, filter, mounted]);
 
   const exportCsv = () => {
     if (!canAction("export")) return;
@@ -323,18 +317,14 @@ export default function PipelinePage() {
         </div>
 
         <div className="mt-4">
-          {kpiErr ? (
-            <div className="text-sm text-red-600 font-semibold">{kpiErr}</div>
-          ) : kpis ? (
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-              <KpiCard title="Pending Insurance" value={kpis.pending_insurance} />
-              <KpiCard title="Pending VAHAN" value={kpis.pending_vahan} />
-              <KpiCard title="Pending HSRP" value={kpis.pending_hsrp} />
-              <KpiCard title="Pending RC" value={kpis.pending_rc} />
-              <KpiCard title="Expiring ≤10d" value={kpis.expiring_soon} />
-              <KpiCard title="Expired" value={kpis.expired} />
-            </div>
-          ) : null}
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+            <KpiCard title="Pending Insurance" value={counts.pending_insurance} />
+            <KpiCard title="Pending VAHAN" value={counts.pending_vahan} />
+            <KpiCard title="Pending HSRP" value={counts.pending_hsrp} />
+            <KpiCard title="Pending RC" value={counts.pending_rc} />
+            <KpiCard title="Expiring ≤10d" value={counts.due_renewals} />
+            <KpiCard title="Expired" value={counts.expired} />
+          </div>
         </div>
 
         <div className="mt-4 bg-white rounded-2xl shadow p-4 border border-slate-200">
@@ -348,7 +338,6 @@ export default function PipelinePage() {
             <button
               onClick={() => {
                 fetchList(q);
-                fetchKpis();
               }}
               className="px-4 py-2 rounded bg-slate-900 text-white font-semibold hover:bg-slate-800"
             >
@@ -359,7 +348,6 @@ export default function PipelinePage() {
                 setQ("");
                 setFilter("all");
                 fetchList("");
-                fetchKpis();
               }}
               className="px-4 py-2 rounded border border-slate-300 font-semibold bg-white text-slate-800 hover:bg-slate-50"
             >
@@ -476,6 +464,7 @@ export default function PipelinePage() {
                       N/A
                     </span>
                   );
+
                   if (info.kind === "expired") {
                     expiryBadge = (
                       <span className="inline-flex px-3 py-1 rounded-full bg-black text-white font-semibold">
@@ -504,17 +493,31 @@ export default function PipelinePage() {
 
                   return (
                     <tr key={row.sale_id} className="border-b border-slate-200">
-                      <td className="p-3 font-semibold text-slate-900">{row.customer_name}</td>
+                      <td className="p-3 font-semibold text-slate-900">
+                        {row.customer_name}
+                      </td>
                       <td className="p-3 text-slate-900">{row.mobile || "-"}</td>
                       <td className="p-3 text-slate-900">
                         {(row.vehicle_make || "-") + " / " + (row.vehicle_model || "-")}
                       </td>
-                      <td className="p-3 text-slate-900">{row.details.vehicle_no || "-"}</td>
-                      <td className="p-3 text-slate-900">{row.chassis_number || "-"}</td>
-                      <td className="p-3 text-slate-900">{row.invoice_number || "-"}</td>
-                      <td className="p-3 text-slate-900">{row.details.policy_number || "-"}</td>
-                      <td className="p-3 text-slate-900">{row.details.hsrp_number || "-"}</td>
-                      <td className="p-3 text-slate-900">{row.details.rc_number || "-"}</td>
+                      <td className="p-3 text-slate-900">
+                        {row.details.vehicle_no || "-"}
+                      </td>
+                      <td className="p-3 text-slate-900">
+                        {row.chassis_number || "-"}
+                      </td>
+                      <td className="p-3 text-slate-900">
+                        {row.invoice_number || "-"}
+                      </td>
+                      <td className="p-3 text-slate-900">
+                        {row.details.policy_number || "-"}
+                      </td>
+                      <td className="p-3 text-slate-900">
+                        {row.details.hsrp_number || "-"}
+                      </td>
+                      <td className="p-3 text-slate-900">
+                        {row.details.rc_number || "-"}
+                      </td>
 
                       <td className="p-3">
                         <div>{expiryBadge}</div>
@@ -525,22 +528,46 @@ export default function PipelinePage() {
 
                       <td className="p-3">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass("done")}`}>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              "done"
+                            )}`}
+                          >
                             Sale
                           </span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(row.stages.insurance)}`}>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              row.stages.insurance
+                            )}`}
+                          >
                             Insurance
                           </span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(row.stages.vahan)}`}>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              row.stages.vahan
+                            )}`}
+                          >
                             VAHAN
                           </span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(row.stages.hsrp)}`}>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              row.stages.hsrp
+                            )}`}
+                          >
                             HSRP
                           </span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(row.stages.rc)}`}>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              row.stages.rc
+                            )}`}
+                          >
                             RC
                           </span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(row.stages.rto)}`}>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              row.stages.rto
+                            )}`}
+                          >
                             RTO
                           </span>
                         </div>
@@ -573,7 +600,7 @@ export default function PipelinePage() {
                           </Link>
 
                           <Link
-                            href={`/vahan?sale_id=${row.sale_id}`}
+                            href={`/vahan/${row.sale_id}`}
                             className={`px-3 py-2 rounded border font-semibold ${
                               canVahan
                                 ? "bg-white text-slate-800 border-slate-300 hover:bg-slate-50"
