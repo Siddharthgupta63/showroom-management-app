@@ -47,7 +47,6 @@ export default function Sidebar() {
     hasPermission("view_purchases") ||
     hasPermission("manage_purchases");
 
-  // ✅ VAHAN visible only if owner/admin or permission granted from UI
   const canVahan = isOwnerAdmin || hasPermission("vahan_access");
 
   const canPermissions =
@@ -55,12 +54,20 @@ export default function Sidebar() {
   const canDropdowns =
     isOwnerAdminManager || hasPermission("manage_dropdowns");
 
-  const canAdminSection = isOwnerAdminManager || canPermissions || canDropdowns;
+  // only owner/admin
+  const canDashboardPermissions = isOwnerAdmin;
+
+  const canAdminSection =
+    isOwnerAdminManager ||
+    canPermissions ||
+    canDropdowns ||
+    canDashboardPermissions;
 
   const isAdminUsersSectionActive =
     isActive("/admin/users") ||
     isActive("/admin/active-users") ||
     isActive("/admin/access-window") ||
+    isActive("/admin/dashboard-permissions") ||
     isActive("/admin/permissions") ||
     isActive("/admin/dropdowns");
 
@@ -157,6 +164,15 @@ export default function Sidebar() {
               >
                 Staff Access Time
               </Link>
+
+              {canDashboardPermissions && (
+                <Link
+                  href="/admin/dashboard-permissions"
+                  className={childLinkClass("/admin/dashboard-permissions")}
+                >
+                  Dashboard Permissions
+                </Link>
+              )}
 
               {canPermissions && (
                 <Link
