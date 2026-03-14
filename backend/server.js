@@ -6,6 +6,8 @@ const dotenv = require("dotenv");
 const path = require("path");
 const branchesRoutes = require("./routes/branches");
 const { ensureViews } = require("./utils/ensureViews");
+const hsrpRoutes = require("./routes/hsrp");
+const rcRoutes = require("./routes/rc");
 
 dotenv.config(); // load env first
 
@@ -46,16 +48,18 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/sales", require("./routes/sales"));
 app.use("/api/contacts", require("./routes/contacts"));
 app.use("/api/vehicles", require("./routes/vehicles"));
-app.use("/api/vahan", require("./routes/vahan")); // ✅ added VAHAN routes
+app.use("/api/vahan", require("./routes/vahan"));
+app.use("/api/hsrp", hsrpRoutes);
+app.use("/api/rc", rcRoutes);
 
-app.use("/api/purchases", require("./routes/purchases")); // ✅ ONCE ONLY
+app.use("/api/purchases", require("./routes/purchases"));
 
 // ✅ branches
 app.use("/api/branches", branchesRoutes);
 
 app.use("/api/reports", require("./routes/reports"));
 app.use("/api/admin/vehicle-catalog", require("./routes/vehicleCatalog"));
-app.use("/api/vehicleCatalog", require("./routes/vehicleCatalog")); // ✅ alias for frontend
+app.use("/api/vehicleCatalog", require("./routes/vehicleCatalog"));
 
 app.use("/api/insurance", require("./routes/insurance"));
 app.use("/api/insurance-policies", require("./routes/insurancePolicies"));
@@ -68,7 +72,7 @@ app.use("/api/pipeline", require("./routes/pipeline"));
 // ✅ WhatsApp Logs APIs
 app.use("/api/whatsapp", require("./routes/whatsappLogs"));
 
-// ✅ Dropdown master APIs (DO NOT CRASH SERVER if route file has an import issue)
+// ✅ Dropdown master APIs
 try {
   app.use("/api/dropdowns", require("./routes/dropdowns"));
   console.log("✅ /api/dropdowns route loaded");

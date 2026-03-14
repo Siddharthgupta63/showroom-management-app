@@ -98,6 +98,8 @@ export default function AdminPermissionsPage() {
     return out;
   }, [filteredPerms]);
 
+  const visibleRoles = onlyRole === "all" ? ROLES : ROLES.filter((r) => r === onlyRole);
+
   const isChecked = (role: string, key: string) => normalized?.[role]?.has(key) || false;
 
   const toggle = (role: string, key: string) => {
@@ -158,7 +160,7 @@ export default function AdminPermissionsPage() {
           <div>
             <h1 className="text-2xl font-bold">Role Permissions</h1>
             <p className="text-sm text-gray-600">
-              Control what each role can do (Contacts, Insurance, WhatsApp, etc.).
+              Control what each role can do (Contacts, Insurance, WhatsApp, HSRP, Export, etc.).
             </p>
             <p className="text-xs text-gray-500 mt-1">
               Dashboard tiles visibility is separate: go to{" "}
@@ -232,29 +234,27 @@ export default function AdminPermissionsPage() {
                     <thead className="bg-gray-50 text-gray-700">
                       <tr>
                         <th className="p-3 text-left">Permission</th>
-                        {(onlyRole === "all" ? ROLES : ROLES.filter((r) => r === onlyRole)).map(
-                          (r) => (
-                            <th key={r} className="p-3 text-center whitespace-nowrap">
-                              <div className="font-semibold">{r}</div>
-                              <div className="mt-2 flex items-center justify-center gap-2">
-                                <button
-                                  onClick={() => setAllVisibleForRole(r, true)}
-                                  className="text-xs px-2 py-1 rounded border bg-white"
-                                  type="button"
-                                >
-                                  All
-                                </button>
-                                <button
-                                  onClick={() => setAllVisibleForRole(r, false)}
-                                  className="text-xs px-2 py-1 rounded border bg-white"
-                                  type="button"
-                                >
-                                  None
-                                </button>
-                              </div>
-                            </th>
-                          )
-                        )}
+                        {visibleRoles.map((r) => (
+                          <th key={r} className="p-3 text-center whitespace-nowrap">
+                            <div className="font-semibold">{r}</div>
+                            <div className="mt-2 flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => setAllVisibleForRole(r, true)}
+                                className="text-xs px-2 py-1 rounded border bg-white"
+                                type="button"
+                              >
+                                All
+                              </button>
+                              <button
+                                onClick={() => setAllVisibleForRole(r, false)}
+                                className="text-xs px-2 py-1 rounded border bg-white"
+                                type="button"
+                              >
+                                None
+                              </button>
+                            </div>
+                          </th>
+                        ))}
                       </tr>
                     </thead>
 
@@ -268,17 +268,15 @@ export default function AdminPermissionsPage() {
                             )}
                           </td>
 
-                          {(onlyRole === "all" ? ROLES : ROLES.filter((r) => r === onlyRole)).map(
-                            (r) => (
-                              <td key={r} className="p-3 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked(r, p.permission_key)}
-                                  onChange={() => toggle(r, p.permission_key)}
-                                />
-                              </td>
-                            )
-                          )}
+                          {visibleRoles.map((r) => (
+                            <td key={r} className="p-3 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isChecked(r, p.permission_key)}
+                                onChange={() => toggle(r, p.permission_key)}
+                              />
+                            </td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>

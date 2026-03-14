@@ -1,155 +1,246 @@
-// controllers/rcController.js
-
 const db = require("../db");
 
-// GET /api/rc
-// Optional query params: ?page=1&pageSize=20&status=pending
+function toBool(v) {
+  return Number(v || 0) === 1;
+}
+
+function rcStatusOf(row) {
+  const filePrepared = toBool(row.file_prepared);
+  const fileSent = toBool(row.file_sent_to_agent);
+  const rcReceived = toBool(row.rc_received_from_agent);
+  const delivered = toBool(row.rc_card_delivered);
+
+  if (!filePrepared) return "File Preparation Pending";
+  if (!fileSent) return "File Ready";
+  if (!rcReceived) return "Sent To Agent";
+  if (!delivered) return "RC Received";
+  return "Delivered";
+}
+
+async function ensureRcRow(saleId, userId) {
+  const [rows] = await db.query(
+    `SELECT * FROM rc WHERE sale_id = ? ORDER BY id DESC LIMIT 1`,
+    [saleId]
+  );
+  if (rows.length) return rows[0];
+
+  const [result] = await db.query(
+    `INSERT INTO rc (sale_id, rc_uploaded_by) VALUES (?, ?)`,
+    [saleId, userId || null]
+  );
+
+  const [fresh] = await db.query(
+    `SELECT * FROM rc WHERE id = ? LIMIT 1`,
+    [result.insertId]
+  );
+  return fresh[0];
+}
+
+async function ensureRcStatusRow(saleId, userId) {
+  const [rows] = await db.query(
+    `SELECT * FROM rc_status WHERE sale_id = ? ORDER BY id DESC LIMIT 1`,
+    [saleId]
+  );
+  if (rows.length) return rows[0];
+
+  const [result] = await db.query(
+    `INSERT INTO rc_status (sale_id, rc_uploaded_by) VALUES (?, ?)`,
+    [saleId, userId || null]
+  );
+
+  const [fresh] = await db.query(
+    `SELECT * FROM rc_status WHERE id = ? LIMIT 1`,
+    [result.insertId]
+  );
+  return fresh[0];
+}
+
 const getRCs = async (req, res) => {
-  const page = parseInt(req.query.page || '1', 10);
-  const pageSize = parseInt(req.query.pageSize || '20', 10);
-  const offset = (page - 1) * pageSize;
-  const status = req.query.status || null;
-
   try {
-    const whereClause = status ? 'WHERE status = ?' : '';
-    const params = status ? [status, pageSize, offset] : [pageSize, offset];
+    const [rows] = await db.query(`
+      SELECT
+        s.id AS sale_id,
+        s.customer_name,
+        s.mobile_number,
+        CONCAT_WS(' ', NULLIF(s.vehicle_make, ''), NULLIF(s.vehicle_model, '')) AS vehicle_model,
+        s.sale_date,
 
-    const [rows] = await db.query(
-      `SELECT
-         id,
-         owner_name,
-         vehicle_no,
-         rc_no,
-         status,
-         issue_date,
-         created_by,
-         created_at
-       FROM rc
-       ${whereClause}
-       ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`,
-      params
-    );
+        vs.application_number,
+        COALESCE(vs.payment_done, 0) AS payment_done,
+        vs.rto_number,
 
-    const [countRows] = await db.query(
-      `SELECT COUNT(*) AS total FROM rc ${status ? 'WHERE status = ?' : ''}`,
-      status ? [status] : []
-    );
+        r.id AS rc_id,
+        r.rc_number,
+        r.rc_issued_date,
+        r.notes,
 
-    const total = countRows[0]?.total || 0;
+        rs.id AS rc_status_id,
+        COALESCE(rs.file_prepared, 0) AS file_prepared,
+        rs.file_prepared_date,
+        COALESCE(rs.file_sent_to_agent, 0) AS file_sent_to_agent,
+        rs.file_sent_to_agent_date,
+        rs.agent_name,
+        COALESCE(rs.rc_received_from_agent, 0) AS rc_received_from_agent,
+        rs.rc_received_from_agent_date,
+        COALESCE(rs.rc_card_delivered, 0) AS rc_card_delivered,
+        rs.rc_delivered_date
 
-    return res.json({
-      data: rows,
-      page,
-      pageSize,
-      total,
-    });
+      FROM sales s
+
+      LEFT JOIN (
+        SELECT x.*
+        FROM vahan_submission x
+        INNER JOIN (
+          SELECT sale_id, MAX(id) AS max_id
+          FROM vahan_submission
+          GROUP BY sale_id
+        ) t ON t.max_id = x.id
+      ) vs ON vs.sale_id = s.id
+
+      LEFT JOIN (
+        SELECT x.*
+        FROM rc x
+        INNER JOIN (
+          SELECT sale_id, MAX(id) AS max_id
+          FROM rc
+          GROUP BY sale_id
+        ) t ON t.max_id = x.id
+      ) r ON r.sale_id = s.id
+
+      LEFT JOIN (
+        SELECT x.*
+        FROM rc_status x
+        INNER JOIN (
+          SELECT sale_id, MAX(id) AS max_id
+          FROM rc_status
+          GROUP BY sale_id
+        ) t ON t.max_id = x.id
+      ) rs ON rs.sale_id = s.id
+
+      WHERE COALESCE(s.is_cancelled, 0) = 0
+        AND COALESCE(vs.payment_done, 0) = 1
+        AND COALESCE(vs.application_number, '') <> ''
+
+      ORDER BY s.id DESC
+    `);
+
+    const data = rows.map((r) => ({
+      sale_id: r.sale_id,
+      customer_name: r.customer_name,
+      mobile_number: r.mobile_number || "",
+      vehicle_model: r.vehicle_model || "-",
+      sale_date: r.sale_date,
+      rc_number: r.rto_number || r.rc_number || "",
+      rc_issued_date: r.rc_issued_date,
+      file_prepared: Number(r.file_prepared || 0),
+      file_prepared_date: r.file_prepared_date,
+      file_sent_to_agent: Number(r.file_sent_to_agent || 0),
+      file_sent_to_agent_date: r.file_sent_to_agent_date,
+      agent_name: r.agent_name || "",
+      rc_received_from_agent: Number(r.rc_received_from_agent || 0),
+      rc_received_from_agent_date: r.rc_received_from_agent_date,
+      rc_card_delivered: Number(r.rc_card_delivered || 0),
+      rc_delivered_date: r.rc_delivered_date,
+      notes: r.notes || "",
+      status: rcStatusOf(r),
+    }));
+
+    return res.json(data);
   } catch (err) {
-    console.error('getRCs error:', err);
-    return res.status(500).json({ message: 'Server error fetching RC records' });
+    console.error("getRCs error:", err);
+    return res.status(500).json({ message: "Server error fetching RC records" });
   }
 };
 
-// POST /api/rc
-// Body: { owner_name, vehicle_no, rc_no, issue_date, status }
 const createRC = async (req, res) => {
-  const {
-    owner_name,
-    vehicle_no,
-    rc_no,
-    issue_date,
-    status = 'active',
-  } = req.body;
-
-  if (!owner_name || !vehicle_no || !rc_no || !issue_date) {
-    return res.status(400).json({ message: 'All fields are required' });
-  }
-
   try {
-    const createdBy = req.user?.id || null;
+    const userId = req.user?.id || null;
+    const saleId = Number(req.body.sale_id);
 
-    const [result] = await db.query(
-      `INSERT INTO rc
-        (owner_name, vehicle_no, rc_no, issue_date, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [owner_name, vehicle_no, rc_no, issue_date, status, createdBy]
-    );
+    if (!saleId) {
+      return res.status(400).json({ message: "sale_id is required" });
+    }
 
-    return res.status(201).json({
-      id: result.insertId,
-      owner_name,
-      vehicle_no,
-      rc_no,
-      issue_date,
-      status,
-      created_by: createdBy,
-    });
-  } catch (err) {
-    console.error('createRC error:', err);
-    return res.status(500).json({ message: 'Server error creating RC record' });
-  }
-};
+    await ensureRcRow(saleId, userId);
+    await ensureRcStatusRow(saleId, userId);
 
-// PUT /api/rc/:id
-// Body may update: { owner_name, vehicle_no, rc_no, issue_date, status }
-const updateRC = async (req, res) => {
-  const { id } = req.params;
-  const {
-    owner_name,
-    vehicle_no,
-    rc_no,
-    issue_date,
-    status,
-  } = req.body;
+    const filePrepared = Number(req.body.file_prepared || 0) === 1 ? 1 : 0;
+    const fileSent = Number(req.body.file_sent_to_agent || 0) === 1 ? 1 : 0;
+    const rcReceived = Number(req.body.rc_received_from_agent || 0) === 1 ? 1 : 0;
+    const delivered = Number(req.body.rc_card_delivered || 0) === 1 ? 1 : 0;
 
-  if (!owner_name || !vehicle_no || !rc_no || !issue_date || !status) {
-    return res.status(400).json({ message: 'All fields are required' });
-  }
-
-  try {
-    const [result] = await db.query(
+    await db.query(
       `UPDATE rc
-       SET owner_name = ?, vehicle_no = ?, rc_no = ?, issue_date = ?, status = ?
-       WHERE id = ?`,
-      [owner_name, vehicle_no, rc_no, issue_date, status, id]
+       SET rc_number = COALESCE(NULLIF(?, ''), rc_number),
+           rc_issued_date = ?,
+           rc_uploaded_by = ?,
+           notes = ?
+       WHERE sale_id = ?`,
+      [
+        req.body.rc_number || null,
+        req.body.rc_issued_date || null,
+        userId,
+        req.body.notes || null,
+        saleId,
+      ]
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'RC record not found' });
-    }
+    await db.query(
+      `UPDATE rc_status
+       SET file_prepared = ?,
+           file_prepared_date = ?,
+           file_prepared_by = ?,
+           file_sent_to_agent = ?,
+           file_sent_to_agent_date = ?,
+           agent_name = ?,
+           rc_received_from_agent = ?,
+           rc_received_from_agent_date = ?,
+           rc_received_by = ?,
+           rc_card_delivered = ?,
+           rc_delivered_date = ?
+       WHERE sale_id = ?`,
+      [
+        filePrepared,
+        req.body.file_prepared_date || null,
+        filePrepared ? userId : null,
+        fileSent,
+        req.body.file_sent_to_agent_date || null,
+        req.body.agent_name || null,
+        rcReceived,
+        req.body.rc_received_from_agent_date || null,
+        rcReceived ? userId : null,
+        delivered,
+        req.body.rc_delivered_date || null,
+        saleId,
+      ]
+    );
 
-    return res.json({
-      id: Number(id),
-      owner_name,
-      vehicle_no,
-      rc_no,
-      issue_date,
-      status,
-    });
+    return res.json({ success: true, message: "RC saved successfully" });
   } catch (err) {
-    console.error('updateRC error:', err);
-    return res.status(500).json({ message: 'Server error updating RC record' });
+    console.error("createRC error:", err);
+    return res.status(500).json({ message: "Server error saving RC record" });
   }
 };
 
-// DELETE /api/rc/:id
+const updateRC = async (req, res) => {
+  req.body.sale_id = Number(req.params.id);
+  return createRC(req, res);
+};
+
 const deleteRC = async (req, res) => {
-  const { id } = req.params;
-
   try {
-    const [result] = await db.query(
-      `DELETE FROM rc WHERE id = ?`,
-      [id]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'RC record not found' });
+    const saleId = Number(req.params.id);
+    if (!saleId) {
+      return res.status(400).json({ message: "Invalid sale id" });
     }
 
-    return res.json({ message: 'RC record deleted successfully' });
+    await db.query(`DELETE FROM rc_status WHERE sale_id = ?`, [saleId]);
+    await db.query(`DELETE FROM rc WHERE sale_id = ?`, [saleId]);
+
+    return res.json({ success: true, message: "RC record deleted successfully" });
   } catch (err) {
-    console.error('deleteRC error:', err);
-    return res.status(500).json({ message: 'Server error deleting RC record' });
+    console.error("deleteRC error:", err);
+    return res.status(500).json({ message: "Server error deleting RC record" });
   }
 };
 

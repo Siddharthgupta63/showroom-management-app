@@ -1,42 +1,69 @@
-// routes/hsrp.js
+// backend/routes/hsrp.js
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
-const hsrpController = require('../controllers/hsrpController');
-const { authMiddleware, requireRole } = require('../middleware/authMiddleware');
+const hsrpController = require("../controllers/hsrpController");
+const { authMiddleware, requireRole } = require("../middleware/authMiddleware");
 
-// All /api/hsrp routes require a valid JWT
+// all routes require login
 router.use(authMiddleware);
 
-// Example routes (adapt names to match hsrpController exports)
-
-// GET /api/hsrp
+// =====================================================
+// VIEW / LIST
+// =====================================================
 router.get(
-  '/',
-  requireRole('owner', 'manager', 'hsrp'),
+  "/",
+  requireRole("owner", "admin", "manager", "hsrp"),
   hsrpController.getHSRPRequests
 );
 
-// POST /api/hsrp
+// =====================================================
+// EXPORT
+// =====================================================
+router.get(
+  "/export",
+  requireRole("owner", "admin", "manager", "hsrp"),
+  hsrpController.exportHSRPRequests
+);
+
+// =====================================================
+// OLD CUSTOMER FITMENT
+// =====================================================
 router.post(
-  '/',
-  requireRole('owner', 'manager', 'hsrp'),
-  hsrpController.createHSRPRequest
+  "/old-fitment",
+  requireRole("owner", "admin", "manager", "hsrp"),
+  hsrpController.createOldCustomerFitment
 );
 
-// PUT /api/hsrp/:id
+router.get(
+  "/old-fitment",
+  requireRole("owner", "admin", "manager", "hsrp"),
+  hsrpController.getOldCustomerFitments
+);
+
+router.get(
+  "/old-fitment/export",
+  requireRole("owner", "admin", "manager", "hsrp"),
+  hsrpController.exportOldCustomerFitments
+);
+
+// =====================================================
+// FITMENT EMPLOYEE DROPDOWN
+// =====================================================
+router.get(
+  "/fitment-employees",
+  requireRole("owner", "admin", "manager", "hsrp"),
+  hsrpController.getFitmentEmployees
+);
+
+// =====================================================
+// UPDATE NORMAL SALE-LINKED HSRP
+// =====================================================
 router.put(
-  '/:id',
-  requireRole('owner', 'manager', 'hsrp'),
+  "/:id",
+  requireRole("owner", "admin", "manager", "hsrp"),
   hsrpController.updateHSRPRequest
-);
-
-// DELETE /api/hsrp/:id
-router.delete(
-  '/:id',
-  requireRole('owner'),
-  hsrpController.deleteHSRPRequest
 );
 
 module.exports = router;

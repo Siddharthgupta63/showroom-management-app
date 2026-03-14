@@ -14,6 +14,7 @@ const ALLOWED_TYPES = new Set([
   "vehicle_color",
   "vehicle_purchase_from",
   "nominee_relation",
+  "rc_agent",
 ]);
 
 function normType(t) {

@@ -31,6 +31,7 @@ const TYPES: Array<{ key: string; label: string }> = [
   { key: "vehicle_color", label: "Vehicle Color (Code + Full Form)" },
   { key: "vehicle_purchase_from", label: "Purchase From" },
   { key: "nominee_relation", label: "Nominee Relation" },
+  { key: "rc_agent", label: "RC Agent" },
 
   { key: "vehicle_models", label: "Vehicle Models" },
   { key: "vehicle_variants", label: "Vehicle Variants" },
