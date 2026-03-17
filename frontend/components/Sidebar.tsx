@@ -47,6 +47,11 @@ export default function Sidebar() {
     hasPermission("view_purchases") ||
     hasPermission("manage_purchases");
 
+  const canStock =
+    isOwnerAdmin ||
+    hasPermission("view_purchases") ||
+    hasPermission("manage_purchases");
+
   const canVahan = isOwnerAdmin || hasPermission("vahan_access");
 
   const canPermissions =
@@ -54,7 +59,6 @@ export default function Sidebar() {
   const canDropdowns =
     isOwnerAdminManager || hasPermission("manage_dropdowns");
 
-  // only owner/admin
   const canDashboardPermissions = isOwnerAdmin;
 
   const canAdminSection =
@@ -106,6 +110,12 @@ export default function Sidebar() {
         {canPurchases && (
           <Link href="/purchases" className={linkClass("/purchases")}>
             Purchases
+          </Link>
+        )}
+
+        {canStock && (
+          <Link href="/stock" className={linkClass("/stock")}>
+            Stock
           </Link>
         )}
 

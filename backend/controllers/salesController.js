@@ -847,6 +847,31 @@ exports.createSale = async (req, res) => {
          LIMIT 1`,
         [vehicleId]
       );
+
+const [stockRows] = await conn.query(
+  `
+  SELECT id, status_code, sale_id
+  FROM vehicle_purchase_items
+  WHERE contact_vehicle_id = ?
+  ORDER BY id DESC
+  LIMIT 1
+  FOR UPDATE
+  `,
+  [vehicleId]
+);
+
+if (stockRows.length) {
+  const stock = stockRows[0];
+
+  if (String(stock.status_code || "").toLowerCase() === "sold" && stock.sale_id) {
+    await conn.rollback();
+    return res.status(409).json({
+      success: false,
+      message: `Vehicle already sold in stock (Sale ID: ${stock.sale_id})`,
+    });
+  }
+}
+
       if (!vRows.length) {
         await conn.rollback();
         return res.status(400).json({ success: false, message: "Vehicle not found." });
@@ -938,6 +963,17 @@ exports.createSale = async (req, res) => {
          ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
         [saleId, vehicleId, contactId]
       );
+
+      await conn.query(
+  `
+  UPDATE vehicle_purchase_items
+  SET status_code = 'sold',
+      sold_at = NOW(),
+      sale_id = ?
+  WHERE contact_vehicle_id = ?
+  `,
+  [saleId, vehicleId]
+);
 
       await conn.query(
         `INSERT INTO vahan (sale_id, insurance_done, hsrp_done, rc_done, rc_required, aadhaar_required)
@@ -1202,14 +1238,61 @@ exports.updateSale = async (req, res) => {
 
     await conn.query(`UPDATE sales SET ${setSql} WHERE id = ?`, [...vals, id]);
 
-    if (hydrated && hydrated.contact_vehicle_id && hydrated.contact_id) {
-      await conn.query(
-        `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
-         VALUES (?,?,?)
-         ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
-        [id, hydrated.contact_vehicle_id, hydrated.contact_id]
-      );
-    }
+   const oldVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
+const finalVehicleId = hydrated?.contact_vehicle_id
+  ? Number(hydrated.contact_vehicle_id)
+  : (cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null);
+const finalContactId = hydrated?.contact_id
+  ? Number(hydrated.contact_id)
+  : (cur.contact_id ? Number(cur.contact_id) : null);
+
+const vehicleChanged =
+  oldVehicleId &&
+  finalVehicleId &&
+  Number(oldVehicleId) !== Number(finalVehicleId);
+
+if (vehicleChanged) {
+  // 1) restore old vehicle stock
+  await conn.query(
+    `
+    UPDATE vehicle_purchase_items
+    SET status_code = 'in_stock',
+        sold_at = NULL,
+        sale_id = NULL
+    WHERE contact_vehicle_id = ?
+      AND sale_id = ?
+    `,
+    [oldVehicleId, id]
+  );
+
+  // 2) remove old sale-vehicle link
+  await conn.query(
+    `DELETE FROM sale_vehicle_links WHERE sale_id = ? AND vehicle_id = ?`,
+    [id, oldVehicleId]
+  );
+}
+
+if (finalVehicleId && finalContactId) {
+  // 3) upsert new sale-vehicle link
+  await conn.query(
+    `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
+     VALUES (?,?,?)
+     ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
+    [id, finalVehicleId, finalContactId]
+  );
+
+  // 4) mark new vehicle stock as sold
+  await conn.query(
+    `
+    UPDATE vehicle_purchase_items
+    SET status_code = 'sold',
+        sold_at = NOW(),
+        sale_id = ?
+    WHERE contact_vehicle_id = ?
+    `,
+    [id, finalVehicleId]
+  );
+}
 
     await conn.query(
       `INSERT INTO vahan (sale_id, insurance_done, hsrp_done, rc_done, rc_required, aadhaar_required)
@@ -1294,6 +1377,17 @@ exports.cancelSale = async (req, res) => {
       [req.user?.id || null, id]
     );
 
+    await conn.query(
+  `
+  UPDATE vehicle_purchase_items
+  SET status_code = 'in_stock',
+      sold_at = NULL,
+      sale_id = NULL
+  WHERE sale_id = ?
+  `,
+  [id]
+);
+
     await cancelLinkedInsurance(conn, id, req.user?.id || null);
     await refreshSnapshots(conn, id, "cancel", req.user?.id || null);
 
@@ -1314,15 +1408,41 @@ exports.cancelSale = async (req, res) => {
 // DELETE /api/sales/:id (hard delete)
 // =====================================================
 exports.deleteSale = async (req, res) => {
+  const conn = await db.getConnection();
   try {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
 
-    await db.query(`DELETE FROM sales WHERE id = ?`, [id]);
+    await conn.beginTransaction();
+
+    // restore stock first
+    await conn.query(
+      `
+      UPDATE vehicle_purchase_items
+      SET status_code = 'in_stock',
+          sold_at = NULL,
+          sale_id = NULL
+      WHERE sale_id = ?
+      `,
+      [id]
+    );
+
+    // optional cleanup of sale_vehicle_links
+    await conn.query(`DELETE FROM sale_vehicle_links WHERE sale_id = ?`, [id]);
+
+    // delete sale
+    await conn.query(`DELETE FROM sales WHERE id = ?`, [id]);
+
+    await conn.commit();
     return res.json({ success: true });
   } catch (err) {
+    try {
+      await conn.rollback();
+    } catch {}
     console.error("deleteSale error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
@@ -1341,6 +1461,22 @@ exports.uploadSaleDocuments = [
       if (!files.length) return res.status(400).json({ success: false, message: "No files" });
 
       await conn.beginTransaction();
+
+      // lock selected vehicle row for this transaction
+const [lockedVehicleRows] = await conn.query(
+  `
+  SELECT id, chassis_number, engine_number
+  FROM contact_vehicles
+  WHERE id = ?
+  FOR UPDATE
+  `,
+  [vehicleId]
+);
+
+if (!lockedVehicleRows.length) {
+  await conn.rollback();
+  return res.status(400).json({ success: false, message: "Vehicle not found." });
+}
 
       const [rows] = await conn.query(
         `SELECT documents_json

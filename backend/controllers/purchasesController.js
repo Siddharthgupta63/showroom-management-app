@@ -345,7 +345,7 @@ exports.createPurchaseFromInvoice = async (req, res) => {
           variant_id,
           color,
           rowPrice,
-          status.code === "NEW" ? "NEW" : status.code,
+          status.code === "NEW" ? "in_stock" : status.code,
           status.vehicle_id,
           status.sale_id,
         ]
@@ -498,8 +498,8 @@ exports.listPurchases = async (req, res) => {
         SELECT
           purchase_id,
           COUNT(*) AS total_items,
-          SUM(CASE WHEN status_code = 'NEW' THEN 1 ELSE 0 END) AS inserted_items,
-          SUM(CASE WHEN status_code <> 'NEW' THEN 1 ELSE 0 END) AS skipped_items
+          SUM(CASE WHEN status_code = 'in_stock' THEN 1 ELSE 0 END) AS inserted_items,
+SUM(CASE WHEN status_code <> 'in_stock' THEN 1 ELSE 0 END) AS skipped_items
         FROM vehicle_purchase_items
         GROUP BY purchase_id
       ) x ON x.purchase_id = p.id
@@ -576,8 +576,8 @@ exports.exportPurchasesExcel = async (req, res) => {
         SELECT
           purchase_id,
           COUNT(*) AS total_items,
-          SUM(CASE WHEN status_code = 'NEW' THEN 1 ELSE 0 END) AS inserted_items,
-          SUM(CASE WHEN status_code <> 'NEW' THEN 1 ELSE 0 END) AS skipped_items
+          SUM(CASE WHEN status_code = 'in_stock' THEN 1 ELSE 0 END) AS inserted_items,
+SUM(CASE WHEN status_code <> 'in_stock' THEN 1 ELSE 0 END) AS skipped_items
         FROM vehicle_purchase_items
         GROUP BY purchase_id
       ) x ON x.purchase_id = p.id
