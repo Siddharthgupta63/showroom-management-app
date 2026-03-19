@@ -2,6 +2,18 @@
 const db = require("../db");
 const bcryptjs = require("bcryptjs");
 
+const VALID_ROLES = new Set([
+  "owner",
+  "admin",
+  "manager",
+  "sales",
+  "insurance",
+  "vahan",
+  "hsrp",
+  "renewal",
+  "rc",
+]);
+
 function isOwnerOrAdmin(req) {
   const role = String(req.user?.role || "").toLowerCase();
   return role === "owner" || role === "admin";
@@ -9,6 +21,20 @@ function isOwnerOrAdmin(req) {
 
 function forbid(res) {
   return res.status(403).json({ success: false, message: "Forbidden" });
+}
+
+function normalizeRole(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeText(value) {
+  const s = String(value || "").trim();
+  return s || null;
+}
+
+function sanitizePermissionKeys(input) {
+  const arr = Array.isArray(input) ? input : [];
+  return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
 }
 
 /**
@@ -55,7 +81,8 @@ exports.permissionsCatalog = async (req, res) => {
 
     const rolePermissions = {};
     for (const r of rolePerms) {
-      const role = String(r.role).toLowerCase();
+      const role = normalizeRole(r.role);
+      if (!VALID_ROLES.has(role)) continue;
       if (!rolePermissions[role]) rolePermissions[role] = [];
       rolePermissions[role].push(r.permission_key);
     }
@@ -90,10 +117,13 @@ exports.createUser = async (req, res) => {
       permissions = [],
     } = req.body || {};
 
-    const cleanRole = String(role || "").trim().toLowerCase();
+    const cleanRole = normalizeRole(role);
 
     if (!cleanRole) {
       return res.status(400).json({ success: false, message: "Role is required" });
+    }
+    if (!VALID_ROLES.has(cleanRole)) {
+      return res.status(400).json({ success: false, message: "Invalid role" });
     }
     if (!password || String(password).trim().length < 4) {
       return res
@@ -101,9 +131,9 @@ exports.createUser = async (req, res) => {
         .json({ success: false, message: "Password must be at least 4 characters" });
     }
 
-    const u = username ? String(username).trim() : null;
-    const e = email ? String(email).trim() : null;
-    const m = mobile ? String(mobile).trim() : null;
+    const u = normalizeText(username);
+    const e = normalizeText(email);
+    const m = normalizeText(mobile);
 
     if (!u && !e && !m) {
       return res.status(400).json({
@@ -115,10 +145,7 @@ exports.createUser = async (req, res) => {
     const hashed = await bcryptjs.hash(String(password), 10);
     const active = is_active ? 1 : 0;
 
-    const requestedPerms = Array.isArray(permissions) ? permissions : [];
-    const uniquePerms = [
-      ...new Set(requestedPerms.map((x) => String(x).trim()).filter(Boolean)),
-    ];
+    const uniquePerms = sanitizePermissionKeys(permissions);
 
     await conn.beginTransaction();
 
@@ -127,7 +154,7 @@ exports.createUser = async (req, res) => {
       INSERT INTO users (name, username, email, mobile, password, role, is_active, password_changed_at, token_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 0)
       `,
-      [name ? String(name).trim() : null, u, e, m, hashed, cleanRole, active]
+      [normalizeText(name), u, e, m, hashed, cleanRole, active]
     );
 
     const newUserId = ins.insertId;
@@ -230,19 +257,23 @@ exports.updateUser = async (req, res) => {
       permissions = [],
     } = req.body || {};
 
-    // prevent disabling yourself
     if (Number(req.user?.id) === id && is_active === false) {
       return res
         .status(400)
         .json({ success: false, message: "You cannot disable your own account." });
     }
 
-    const cleanRole = String(role || "").trim().toLowerCase();
-    if (!cleanRole) return res.status(400).json({ success: false, message: "Role is required" });
+    const cleanRole = normalizeRole(role);
+    if (!cleanRole) {
+      return res.status(400).json({ success: false, message: "Role is required" });
+    }
+    if (!VALID_ROLES.has(cleanRole)) {
+      return res.status(400).json({ success: false, message: "Invalid role" });
+    }
 
-    const u = username ? String(username).trim() : null;
-    const e = email ? String(email).trim() : null;
-    const m = mobile ? String(mobile).trim() : null;
+    const u = normalizeText(username);
+    const e = normalizeText(email);
+    const m = normalizeText(mobile);
 
     if (!u && !e && !m) {
       return res.status(400).json({
@@ -252,15 +283,10 @@ exports.updateUser = async (req, res) => {
     }
 
     const active = is_active ? 1 : 0;
-
-    const requestedPerms = Array.isArray(permissions) ? permissions : [];
-    const uniquePerms = [
-      ...new Set(requestedPerms.map((x) => String(x).trim()).filter(Boolean)),
-    ];
+    const uniquePerms = sanitizePermissionKeys(permissions);
 
     await conn.beginTransaction();
 
-    // read current active state so we only bump token_version when going 1 -> 0
     const [currentRows] = await conn.query(
       `SELECT is_active FROM users WHERE id = ?`,
       [id]
@@ -269,10 +295,10 @@ exports.updateUser = async (req, res) => {
       await conn.rollback();
       return res.status(404).json({ success: false, message: "User not found" });
     }
+
     const wasActive = Number(currentRows[0].is_active) === 1;
     const willDisable = wasActive && active === 0;
 
-    // update user
     if (willDisable) {
       await conn.query(
         `
@@ -280,7 +306,7 @@ exports.updateUser = async (req, res) => {
         SET name = ?, username = ?, email = ?, mobile = ?, role = ?, is_active = ?, token_version = token_version + 1
         WHERE id = ?
         `,
-        [name ? String(name).trim() : null, u, e, m, cleanRole, active, id]
+        [normalizeText(name), u, e, m, cleanRole, active, id]
       );
     } else {
       await conn.query(
@@ -289,11 +315,10 @@ exports.updateUser = async (req, res) => {
         SET name = ?, username = ?, email = ?, mobile = ?, role = ?, is_active = ?
         WHERE id = ?
         `,
-        [name ? String(name).trim() : null, u, e, m, cleanRole, active, id]
+        [normalizeText(name), u, e, m, cleanRole, active, id]
       );
     }
 
-    // replace extra permissions
     await conn.query(`DELETE FROM user_permissions WHERE user_id = ?`, [id]);
 
     if (uniquePerms.length > 0) {
@@ -359,7 +384,6 @@ exports.setActive = async (req, res) => {
     }
 
     if (active === 0) {
-      // ✅ revoke token immediately
       await db.query(
         `UPDATE users SET is_active = ?, token_version = token_version + 1 WHERE id = ?`,
         [active, id]
@@ -413,7 +437,6 @@ exports.resetPassword = async (req, res) => {
 // GET /api/admin/active-users
 exports.activeUsers = async (req, res) => {
   try {
-    // owner/admin only
     const role = String(req.user?.role || "").toLowerCase();
     if (!(role === "owner" || role === "admin")) {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -449,7 +472,6 @@ exports.forceLogout = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid user id" });
     }
 
-    // prevent forcing logout yourself (optional but safer)
     if (Number(req.user?.id) === id) {
       return res.status(400).json({
         success: false,
@@ -486,32 +508,30 @@ exports.updateRolePermissions = async (req, res) => {
         .json({ success: false, message: "rolePermissions object is required" });
     }
 
-    // Load valid permission keys from DB (authoritative)
     const [permRows] = await conn.query(`SELECT permission_key FROM permissions`);
     const valid = new Set(permRows.map((r) => r.permission_key));
 
-    // sanitize input
-    const entries = Object.entries(rolePermissions).map(([role, keys]) => {
-      const cleanRole = String(role || "").trim().toLowerCase();
-      const arr = Array.isArray(keys) ? keys : [];
-      const uniq = [...new Set(arr.map((k) => String(k).trim()).filter(Boolean))].filter((k) =>
-        valid.has(k)
-      );
-      return [cleanRole, uniq];
-    });
+    const entries = Object.entries(rolePermissions)
+      .map(([role, keys]) => {
+        const cleanRole = normalizeRole(role);
+        const arr = Array.isArray(keys) ? keys : [];
+        const uniq = [...new Set(arr.map((k) => String(k).trim()).filter(Boolean))].filter((k) =>
+          valid.has(k)
+        );
+        return [cleanRole, uniq];
+      })
+      .filter(([role]) => VALID_ROLES.has(role));
 
-    for (const [role] of entries) {
-      if (!role) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid role in rolePermissions" });
-      }
+    if (entries.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid roles found in rolePermissions",
+      });
     }
 
     await conn.beginTransaction();
 
     for (const [role, keys] of entries) {
-      // Replace per-role
       await conn.query(`DELETE FROM role_permissions WHERE role = ?`, [role]);
 
       if (keys.length > 0) {

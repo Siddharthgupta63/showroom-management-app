@@ -226,14 +226,20 @@ req.user = {
 // -----------------------------
 // Role guard helpers
 // -----------------------------
-exports.requireRole = (roles) => (req, res, next) => {
-  const allowed = Array.isArray(roles) ? roles : [roles];
-  if (!allowed.includes(req.user.role)) {
+exports.requireRole = (...roles) => (req, res, next) => {
+  const allowed =
+    roles.length === 1 && Array.isArray(roles[0]) ? roles[0] : roles;
+
+  const normalizedAllowed = allowed.map((r) => String(r).toLowerCase());
+  const userRole = String(req.user?.role || "").toLowerCase();
+
+  if (!normalizedAllowed.includes(userRole)) {
     return res.status(403).json({
       success: false,
       message: "Forbidden",
     });
   }
+
   next();
 };
 
