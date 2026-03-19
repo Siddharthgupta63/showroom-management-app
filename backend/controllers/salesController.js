@@ -1193,11 +1193,21 @@ exports.updateSale = async (req, res) => {
       nominee_name: extra.nominee_name,
       nominee_relation: extra.nominee_relation,
 
-      vehicle_make: hydrated ? hydrated.vehicle_make : safeText(body.vehicle_make),
-      vehicle_model: hydrated ? hydrated.vehicle_model : safeText(body.vehicle_model),
-      chassis_number: hydrated ? hydrated.chassis_number : safeText(body.chassis_number),
-      engine_number: hydrated ? hydrated.engine_number : safeText(body.engine_number),
+           vehicle_make: hydrated
+        ? hydrated.vehicle_make
+        : (safeText(body.vehicle_make) ?? cur.vehicle_make),
 
+      vehicle_model: hydrated
+        ? hydrated.vehicle_model
+        : (safeText(body.vehicle_model) ?? cur.vehicle_model),
+
+      chassis_number: hydrated
+        ? hydrated.chassis_number
+        : (safeText(body.chassis_number) ?? cur.chassis_number),
+
+      engine_number: hydrated
+        ? hydrated.engine_number
+        : (safeText(body.engine_number) ?? cur.engine_number),
       sale_date: toDateISO(body.sale_date) || toDateISO(cur.sale_date),
       sale_price: body.sale_price != null ? numOrZero(body.sale_price) : cur.sale_price,
       invoice_number: safeText(body.invoice_number),

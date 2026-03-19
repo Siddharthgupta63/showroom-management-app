@@ -125,7 +125,7 @@ const COLOR_LABEL_FALLBACK: Record<string, string> = {
   BRD: "ALL RED",
   BRE: "BLACK RED",
   BGY: "BLACK SILVER",
-  SBK: "SPORTS BLACK",
+  SBK: "BLACK RED",
 };
 
 export default function StockPage() {
@@ -171,35 +171,14 @@ export default function StockPage() {
 
   async function fetchColorDropdowns() {
     try {
-      const tryUrls = [
-        { url: "/api/dropdowns", params: { type: "vehicle_color", includeInactive: 1 } },
-        { url: "/api/dropdowns", params: { type: "vehicle_color_code", includeInactive: 1 } },
-        { url: "/api/dropdowns", params: { type: "color", includeInactive: 1 } },
-      ];
+      const res = await api.get("/api/dropdowns", {
+        params: { types: "vehicle_color" },
+      });
 
-      for (const entry of tryUrls) {
-        try {
-          const res = await api.get(entry.url, { params: entry.params });
-          const payload = res?.data?.data;
+      const payload = res?.data?.data;
+      const list = Array.isArray(payload?.vehicle_color) ? payload.vehicle_color : [];
 
-          if (Array.isArray(payload)) {
-            setColorRows(payload);
-            return;
-          }
-
-          if (Array.isArray(res?.data)) {
-            setColorRows(res.data);
-            return;
-          }
-
-          if (payload && Array.isArray(payload.rows)) {
-            setColorRows(payload.rows);
-            return;
-          }
-        } catch {}
-      }
-
-      setColorRows([]);
+      setColorRows(list);
     } catch (e) {
       console.warn("color dropdown fetch skipped", e);
       setColorRows([]);

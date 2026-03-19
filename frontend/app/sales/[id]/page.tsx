@@ -8,8 +8,8 @@ import api from "@/lib/api";
 import { getUser } from "@/lib/auth";
 
 type Sale = any;
-
 type BranchRow = { id: number; branch_name: string };
+type DropdownItem = { id: number; value: string };
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -19,14 +19,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </div>
   );
 }
+
 function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={`w-full px-3 py-2 border rounded-lg ${props.className || ""}`} />;
 }
+
 function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <textarea {...props} className={`w-full px-3 py-2 border rounded-lg ${props.className || ""}`} />;
 }
 
-// ✅ Locked display input (read-only)
 function LockedInput({ value }: { value: any }) {
   return (
     <input
@@ -37,6 +38,7 @@ function LockedInput({ value }: { value: any }) {
     />
   );
 }
+
 function LockedArea({ value, rows = 2 }: { value: any; rows?: number }) {
   return (
     <textarea
@@ -108,8 +110,7 @@ export default function SaleViewEditPage() {
   const canEdit = role === "owner" || role === "admin" || role === "manager";
   const canDelete = role === "owner" || role === "admin";
   const canCancel = role === "owner" || role === "admin" || role === "manager";
-
-  // ✅ everyone can upload documents later (per your requirement)
+  const isOwnerAdmin = role === "owner" || role === "admin";
   const canUploadDocs = true;
 
   const [loading, setLoading] = useState(true);
@@ -123,8 +124,17 @@ export default function SaleViewEditPage() {
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // ✅ Branches
   const [branches, setBranches] = useState<BranchRow[]>([]);
+
+  const [ddInsuranceCompanies, setDdInsuranceCompanies] = useState<DropdownItem[]>([]);
+  const [ddInsuranceBrokers, setDdInsuranceBrokers] = useState<DropdownItem[]>([]);
+  const [ddFinanceCompanies, setDdFinanceCompanies] = useState<DropdownItem[]>([]);
+  const [ddTyres, setDdTyres] = useState<DropdownItem[]>([]);
+  const [ddHelmets, setDdHelmets] = useState<DropdownItem[]>([]);
+  const [ddNomineeRelations, setDdNomineeRelations] = useState<DropdownItem[]>([]);
+
+  const updateField = (k: string, v: any) => setSale((s: any) => ({ ...(s || {}), [k]: v }));
+
   const loadBranches = async () => {
     try {
       const res = await api.get("/api/branches");
@@ -132,6 +142,109 @@ export default function SaleViewEditPage() {
     } catch {
       setBranches([]);
     }
+  };
+
+  const loadDropdowns = async () => {
+    try {
+      const res = await api.get("/api/dropdowns", {
+        params: {
+          types: "insurance_company,insurance_broker,finance_company,tyre,helmet,nominee_relation",
+        },
+      });
+
+      const data = res.data?.data || {};
+      setDdInsuranceCompanies(data.insurance_company || []);
+      setDdInsuranceBrokers(data.insurance_broker || []);
+      setDdFinanceCompanies(data.finance_company || []);
+      setDdTyres(data.tyre || []);
+      setDdHelmets(data.helmet || []);
+      setDdNomineeRelations(data.nominee_relation || []);
+    } catch {
+      setDdInsuranceCompanies([]);
+      setDdInsuranceBrokers([]);
+      setDdFinanceCompanies([]);
+      setDdTyres([]);
+      setDdHelmets([]);
+      setDdNomineeRelations([]);
+    }
+  };
+
+  const addDropdownValue = async (type: string) => {
+    const label = type.replaceAll("_", " ");
+    const v = window.prompt(`Add ${label}`);
+    if (!v || !v.trim()) return;
+
+    try {
+      await api.post(`/api/dropdowns/${type}`, { value: v.trim() });
+      await loadDropdowns();
+
+      const value = v.trim();
+      if (type === "insurance_company") updateField("insurance_company", value);
+      if (type === "insurance_broker") updateField("insurance_broker", value);
+      if (type === "finance_company") updateField("finance_company", value);
+      if (type === "tyre") updateField("tyre", value);
+      if (type === "helmet") updateField("helmet", value);
+      if (type === "nominee_relation") updateField("nominee_relation", value);
+    } catch (e: any) {
+      alert(e?.response?.data?.message || "Failed to add dropdown value");
+    }
+  };
+
+  const DropdownOrInput = ({
+    value,
+    onChange,
+    options,
+    placeholder,
+    typeKey,
+    disabled,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    options: DropdownItem[];
+    placeholder: string;
+    typeKey?: string;
+    disabled?: boolean;
+  }) => {
+    if (!options || options.length === 0) {
+      return (
+        <TextInput
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+        />
+      );
+    }
+
+    return (
+      <div className="flex gap-2">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className="w-full px-3 py-2 border rounded-lg bg-white disabled:bg-gray-100"
+        >
+          <option value="">Select</option>
+          {options.map((x) => (
+            <option key={x.id} value={x.value}>
+              {x.value}
+            </option>
+          ))}
+        </select>
+
+        {isOwnerAdmin && typeKey ? (
+          <button
+            type="button"
+            disabled={disabled}
+            className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50"
+            title="Add to dropdown"
+            onClick={() => addDropdownValue(typeKey)}
+          >
+            +
+          </button>
+        ) : null}
+      </div>
+    );
   };
 
   const load = async () => {
@@ -150,12 +263,12 @@ export default function SaleViewEditPage() {
 
   useEffect(() => {
     loadBranches();
+    loadDropdowns();
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idRaw]);
 
   const isCancelled = Number(sale?.is_cancelled || 0) === 1;
-  const updateField = (k: string, v: any) => setSale((s: any) => ({ ...(s || {}), [k]: v }));
 
   const branchName = useMemo(() => {
     const bid = sale?.branch_id ? Number(sale.branch_id) : null;
@@ -173,7 +286,6 @@ export default function SaleViewEditPage() {
     }
   }, [sale?.documents_json]);
 
-  // ✅ FIX: Print must include token (new tab doesn't send Authorization header)
   const openPrint = () => {
     const token =
       localStorage.getItem("token") ||
@@ -198,13 +310,12 @@ export default function SaleViewEditPage() {
 
     try {
       const payload = {
-        // ✅ keep required fields always
         customer_name: (sale.customer_name || "").trim(),
         mobile_number: (sale.mobile_number || "").trim() || null,
         email: sale.email || null,
 
-        // ✅ branch support
-        branch_id: sale.branch_id != null && String(sale.branch_id) !== "" ? Number(sale.branch_id) : null,
+        branch_id:
+          sale.branch_id != null && String(sale.branch_id) !== "" ? Number(sale.branch_id) : null,
 
         sale_date: yyyyMmDd(sale.sale_date),
 
@@ -352,7 +463,6 @@ export default function SaleViewEditPage() {
             </div>
           </div>
 
-          {/* Documents */}
           <div className="mt-4 border rounded-xl bg-white p-4 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <div className="font-semibold">Documents</div>
@@ -369,7 +479,6 @@ export default function SaleViewEditPage() {
               <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => uploadDocs(e.target.files)} />
               <button
                 onClick={() => fileRef.current?.click()}
-                // ✅ allow everyone to upload (not blocked by canEdit)
                 disabled={!canUploadDocs || docsUploading || !Number.isFinite(id)}
                 className="px-4 py-2 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
               >
@@ -378,7 +487,6 @@ export default function SaleViewEditPage() {
             </div>
           </div>
 
-          {/* Uploaded Files */}
           <div className="mt-3 border rounded-xl bg-white p-4">
             <div className="font-semibold">Uploaded Files</div>
             {docs.length === 0 ? (
@@ -406,7 +514,11 @@ export default function SaleViewEditPage() {
                           <td>{d.mimetype || "-"}</td>
                           <td>{d.size ? bytesToHuman(Number(d.size)) : "-"}</td>
                           <td>
-                            {d.uploaded_at ? String(d.uploaded_at).slice(0, 10) : d.uploadedAt ? String(d.uploadedAt).slice(0, 10) : "-"}
+                            {d.uploaded_at
+                              ? String(d.uploaded_at).slice(0, 10)
+                              : d.uploadedAt
+                              ? String(d.uploadedAt).slice(0, 10)
+                              : "-"}
                           </td>
                           <td className="text-right">
                             {url ? (
@@ -431,7 +543,6 @@ export default function SaleViewEditPage() {
             )}
           </div>
 
-          {/* Form */}
           {loading ? (
             <div className="mt-4 text-gray-500">Loading...</div>
           ) : !sale ? (
@@ -443,7 +554,6 @@ export default function SaleViewEditPage() {
               </div>
 
               <div className="grid md:grid-cols-3 gap-4">
-                {/* ✅ Branch */}
                 <Field label="Branch">
                   {canEdit ? (
                     <select
@@ -463,7 +573,6 @@ export default function SaleViewEditPage() {
                   )}
                 </Field>
 
-                {/* ✅ LOCKED: picked from contact */}
                 <Field label="Customer Name (Locked)">
                   <LockedInput value={sale.customer_name || ""} />
                 </Field>
@@ -480,7 +589,6 @@ export default function SaleViewEditPage() {
                   <LockedArea value={sale.address || ""} rows={2} />
                 </Field>
 
-                {/* ✅ LOCKED: picked from vehicle */}
                 <Field label="Vehicle Model (Locked)">
                   <LockedInput value={sale.vehicle_model || ""} />
                 </Field>
@@ -493,7 +601,6 @@ export default function SaleViewEditPage() {
                   <LockedInput value={sale.engine_number || ""} />
                 </Field>
 
-                {/* ✅ Editable sale fields */}
                 <Field label="Sale Date">
                   <TextInput
                     type="date"
@@ -521,9 +628,12 @@ export default function SaleViewEditPage() {
                 </Field>
 
                 <Field label="Finance Company">
-                  <TextInput
+                  <DropdownOrInput
                     value={sale.finance_company || ""}
-                    onChange={(e) => updateField("finance_company", e.target.value)}
+                    onChange={(v) => updateField("finance_company", v)}
+                    options={ddFinanceCompanies}
+                    placeholder="Enter finance company..."
+                    typeKey="finance_company"
                     disabled={!canEdit}
                   />
                 </Field>
@@ -545,9 +655,12 @@ export default function SaleViewEditPage() {
                 </Field>
 
                 <Field label="Insurance Company">
-                  <TextInput
+                  <DropdownOrInput
                     value={sale.insurance_company || ""}
-                    onChange={(e) => updateField("insurance_company", e.target.value)}
+                    onChange={(v) => updateField("insurance_company", v)}
+                    options={ddInsuranceCompanies}
+                    placeholder="Enter insurance company..."
+                    typeKey="insurance_company"
                     disabled={!canEdit}
                   />
                 </Field>
@@ -561,9 +674,34 @@ export default function SaleViewEditPage() {
                 </Field>
 
                 <Field label="Insurance Broker">
-                  <TextInput
+                  <DropdownOrInput
                     value={sale.insurance_broker || ""}
-                    onChange={(e) => updateField("insurance_broker", e.target.value)}
+                    onChange={(v) => updateField("insurance_broker", v)}
+                    options={ddInsuranceBrokers}
+                    placeholder="Enter insurance broker..."
+                    typeKey="insurance_broker"
+                    disabled={!canEdit}
+                  />
+                </Field>
+
+                <Field label="Nominee Relation">
+                  <DropdownOrInput
+                    value={sale.nominee_relation || ""}
+                    onChange={(v) => updateField("nominee_relation", v)}
+                    options={ddNomineeRelations}
+                    placeholder="Enter nominee relation..."
+                    typeKey="nominee_relation"
+                    disabled={!canEdit}
+                  />
+                </Field>
+
+                <Field label="Tyre">
+                  <DropdownOrInput
+                    value={sale.tyre || ""}
+                    onChange={(v) => updateField("tyre", v)}
+                    options={ddTyres}
+                    placeholder="Enter tyre..."
+                    typeKey="tyre"
                     disabled={!canEdit}
                   />
                 </Field>
@@ -586,9 +724,12 @@ export default function SaleViewEditPage() {
                 </Field>
 
                 <Field label="Helmet">
-                  <TextInput
+                  <DropdownOrInput
                     value={sale.helmet || ""}
-                    onChange={(e) => updateField("helmet", e.target.value)}
+                    onChange={(v) => updateField("helmet", v)}
+                    options={ddHelmets}
+                    placeholder="Enter helmet..."
+                    typeKey="helmet"
                     disabled={!canEdit}
                   />
                 </Field>
