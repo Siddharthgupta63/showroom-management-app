@@ -142,4 +142,18 @@ router.post(
   adminController.updateAccessWindow
 );
 
+router.get(
+  "/dashboard-notice",
+  authMiddleware,
+  adminController.getDashboardNotice
+);
+
+router.post(
+  "/dashboard-notice",
+  authMiddleware,
+  requireRole(["owner", "admin"]),
+  adminController.updateDashboardNotice
+);
+
+
 module.exports = router;

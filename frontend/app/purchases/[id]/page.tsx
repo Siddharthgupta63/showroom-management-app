@@ -11,6 +11,9 @@ import { usePermissions } from "@/hooks/usePermissions";
 type Purchase = {
   id: number;
   purchase_from: string | null;
+  transporter_name?: string | null;
+  lr_number?: string | null;
+  transport_vehicle_number?: string | null;
   invoice_number: string | null;
   invoice_date?: string | null;
   purchase_date: string | null;
@@ -59,7 +62,7 @@ export default function PurchaseViewPage() {
 
   const counts = useMemo(() => {
     const total = items.length;
-    const inserted = items.filter((x) => String(x.status_code || "").toUpperCase() === "NEW").length;
+    const inserted = items.filter((x) => String(x.status_code || "").toLowerCase() === "in_stock").length;
     const skipped = total - inserted;
     return { total, inserted, skipped };
   }, [items]);
@@ -93,12 +96,13 @@ export default function PurchaseViewPage() {
     if (c === "UNLINKED") return <span className="text-amber-700 font-semibold">🟡 UNLINKED</span>;
     if (c === "SOLD") return <span className="text-blue-700 font-semibold">🔵 SOLD</span>;
     if (c === "INVALID") return <span className="text-gray-700 font-semibold">⚪ INVALID</span>;
+    if (c === "IN_STOCK") return <span className="text-green-700 font-semibold">🟢 IN STOCK</span>;
     return <span className="text-red-700 font-semibold">🔴 DUPLICATE</span>;
   };
 
   const rowBg = (code: string | null) => {
     const c = String(code || "").toUpperCase();
-    if (c === "NEW") return "hover:bg-gray-50";
+    if (c === "NEW" || c === "IN_STOCK") return "hover:bg-gray-50";
     if (c === "UNLINKED") return "bg-amber-50";
     if (c === "SOLD") return "bg-blue-50";
     if (c === "INVALID") return "bg-gray-50";
@@ -124,9 +128,18 @@ export default function PurchaseViewPage() {
               </div>
 
               <div className="flex gap-2 flex-wrap">
-                <Link href="/purchases" className="px-4 py-2 border rounded-lg">
+                <Link href="/purchases" className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50">
                   Back
                 </Link>
+
+                {canManage && (
+                  <Link
+                    href={`/purchases/${id}/edit`}
+                    className="px-4 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600"
+                  >
+                    Edit
+                  </Link>
+                )}
 
                 <Link
                   href={`/purchases/${id}/print`}
@@ -166,13 +179,28 @@ export default function PurchaseViewPage() {
                   </div>
 
                   <div>
+                    <div className="text-gray-600">Transporter Name</div>
+                    <div className="font-semibold">{purchase.transporter_name || "-"}</div>
+                  </div>
+
+                  <div>
                     <div className="text-gray-600">Invoice No</div>
                     <div className="font-semibold">{purchase.invoice_number || "-"}</div>
                   </div>
 
                   <div>
+                    <div className="text-gray-600">LR Number</div>
+                    <div className="font-semibold">{purchase.lr_number || "-"}</div>
+                  </div>
+
+                  <div>
                     <div className="text-gray-600">Purchase Date</div>
                     <div className="font-semibold">{purchase.purchase_date || "-"}</div>
+                  </div>
+
+                  <div>
+                    <div className="text-gray-600">Vehicle Number</div>
+                    <div className="font-semibold">{purchase.transport_vehicle_number || "-"}</div>
                   </div>
 
                   <div>

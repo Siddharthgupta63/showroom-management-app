@@ -258,3 +258,128 @@ exports.updateAccessWindow = async (req, res) => {
   }
 };
 
+
+// GET /api/admin/dashboard-notice
+// GET /api/admin/dashboard-notice
+exports.getDashboardNotice = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `
+      SELECT
+        dashboard_notice_enabled,
+        dashboard_notice_text,
+        login_effect_enabled,
+        login_effect_type,
+        login_effect_duration_sec,
+        login_effect_message
+      FROM settings
+      ORDER BY id ASC
+      LIMIT 1
+      `
+    );
+
+    const row = rows?.[0] || {
+      dashboard_notice_enabled: 1,
+      dashboard_notice_text: "",
+      login_effect_enabled: 0,
+      login_effect_type: "none",
+      login_effect_duration_sec: 5,
+      login_effect_message: "",
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        dashboard_notice_enabled: Number(row.dashboard_notice_enabled) === 1 ? 1 : 0,
+        dashboard_notice_text: row.dashboard_notice_text || "",
+        login_effect_enabled: Number(row.login_effect_enabled) === 1 ? 1 : 0,
+        login_effect_type: row.login_effect_type || "none",
+        login_effect_duration_sec: Number(row.login_effect_duration_sec) || 5,
+        login_effect_message: row.login_effect_message || "",
+      },
+    });
+  } catch (e) {
+    console.error("getDashboardNotice error:", e);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load dashboard notice",
+    });
+  }
+};
+
+// POST /api/admin/dashboard-notice
+// POST /api/admin/dashboard-notice
+exports.updateDashboardNotice = async (req, res) => {
+  try {
+    const enabled =
+      Number(req.body?.enabled) === 1 || req.body?.enabled === true ? 1 : 0;
+
+    const rawMessage =
+      typeof req.body?.message === "string" ? req.body.message : "";
+    const message = rawMessage.trim().slice(0, 500);
+
+    const loginEffectEnabled =
+      Number(req.body?.login_effect_enabled) === 1 ||
+      req.body?.login_effect_enabled === true
+        ? 1
+        : 0;
+
+    const allowedTypes = [
+  "none",
+  "diwali",
+  "navratri",
+  "new_year",
+  "christmas",
+  "holi",
+  "independence_day",
+];
+    const loginEffectType = allowedTypes.includes(String(req.body?.login_effect_type || ""))
+      ? String(req.body.login_effect_type)
+      : "none";
+
+    const durationRaw = Number(req.body?.login_effect_duration_sec || 5);
+    const loginEffectDurationSec = Math.min(10, Math.max(3, durationRaw || 5));
+
+    const rawEffectMessage =
+      typeof req.body?.login_effect_message === "string"
+        ? req.body.login_effect_message
+        : "";
+    const loginEffectMessage = rawEffectMessage.trim().slice(0, 255);
+
+    await db.query(
+      `
+      UPDATE settings
+      SET dashboard_notice_enabled = ?,
+          dashboard_notice_text = ?,
+          login_effect_enabled = ?,
+          login_effect_type = ?,
+          login_effect_duration_sec = ?,
+          login_effect_message = ?
+      WHERE id = (
+        SELECT id FROM (
+          SELECT id FROM settings ORDER BY id ASC LIMIT 1
+        ) x
+      )
+      `,
+      [
+        enabled,
+        message,
+        loginEffectEnabled,
+        loginEffectType,
+        loginEffectDurationSec,
+        loginEffectMessage,
+      ]
+    );
+
+    return res.json({
+      success: true,
+      message: "Dashboard notice updated successfully",
+    });
+  } catch (e) {
+    console.error("updateDashboardNotice error:", e);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update dashboard notice",
+    });
+  }
+};

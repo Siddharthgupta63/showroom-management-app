@@ -199,7 +199,13 @@ exports.createPurchaseFromInvoice = async (req, res) => {
     const vehicles = Array.isArray(body.vehicles) ? body.vehicles : [];
 
     const purchase_from = body.purchase_from ? String(body.purchase_from).trim() : null;
-    const invoice_number = body.invoice_number ? String(body.invoice_number).trim() : null;
+const transporter_name = body.transporter_name ? String(body.transporter_name).trim() : null;
+const lr_number = body.lr_number ? String(body.lr_number).trim() : null;
+const transport_vehicle_number = body.transport_vehicle_number
+  ? String(body.transport_vehicle_number).trim()
+  : null;
+
+const invoice_number = body.invoice_number ? String(body.invoice_number).trim() : null;
 
     // IMPORTANT: support invoice_date + purchase_date
     const invoice_date = parseDateToYMD(body.invoice_date) || null;
@@ -228,8 +234,21 @@ exports.createPurchaseFromInvoice = async (req, res) => {
     // 1) Create purchase header (store into whichever amount column exists)
     const created_by = req.user?.id || null;
 
-    const headerCols = ["purchase_from", "invoice_number"];
-    const headerVals = [purchase_from, invoice_number];
+    const headerCols = [
+  "purchase_from",
+  "transporter_name",
+  "lr_number",
+  "transport_vehicle_number",
+  "invoice_number",
+];
+
+const headerVals = [
+  purchase_from,
+  transporter_name,
+  lr_number,
+  transport_vehicle_number,
+  invoice_number,
+];
 
     if (schema.hasInvoiceDate) {
       headerCols.push("invoice_date");
@@ -703,3 +722,353 @@ exports.exportPurchaseItemsExcel = async (req, res) => {
   }
 };
 
+// =====================================================
+// PUT /api/purchases/:id
+// Update purchase header only
+// =====================================================
+// =====================================================
+// PUT /api/purchases/:id
+// Update purchase header + existing item rows
+// =====================================================
+// =====================================================
+// PUT /api/purchases/:id
+// Update purchase header + existing item rows
+// Also sync linked contact_vehicles safely
+// =====================================================
+exports.updatePurchaseById = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    const schema = await getSchemaCached();
+
+    const id = Number(req.params.id);
+    if (!id) {
+      return res.status(400).json({ success: false, message: "Invalid ID" });
+    }
+
+    const [existingRows] = await conn.query(
+      `SELECT id FROM vehicle_purchases WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!existingRows.length) {
+      return res.status(404).json({ success: false, message: "Purchase not found" });
+    }
+
+    const body = req.body || {};
+
+    const purchase_from =
+      body.purchase_from != null ? String(body.purchase_from).trim() : null;
+
+    const invoice_number =
+      body.invoice_number != null ? String(body.invoice_number).trim() : null;
+
+    const invoice_date =
+      body.invoice_date != null && String(body.invoice_date).trim() !== ""
+        ? parseDateToYMD(body.invoice_date)
+        : null;
+
+    const purchase_date =
+      body.purchase_date != null && String(body.purchase_date).trim() !== ""
+        ? parseDateToYMD(body.purchase_date)
+        : null;
+
+    const purchase_amount = getHeaderAmountValue(body.purchase_amount);
+
+    const notes =
+      body.notes != null && String(body.notes).trim() !== ""
+        ? String(body.notes)
+        : null;
+
+    const items = Array.isArray(body.items) ? body.items : [];
+
+    if (!purchase_from) {
+      return res.status(400).json({
+        success: false,
+        message: "Purchase From is required",
+      });
+    }
+
+    if (!purchase_date) {
+      return res.status(400).json({
+        success: false,
+        message: "Purchase Date is required",
+      });
+    }
+
+    if (!items.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one item is required",
+      });
+    }
+
+    // local duplicate check inside request payload
+    const seenEngine = new Set();
+    const seenChassis = new Set();
+
+    for (const row of items) {
+      const eng = normalizeToken(row.engine_number || "");
+      const chs = normalizeToken(row.chassis_number || "");
+
+      if (!eng || !chs) {
+        return res.status(400).json({
+          success: false,
+          message: "Engine and chassis are required for all items",
+        });
+      }
+
+      if (seenEngine.has(eng)) {
+        return res.status(400).json({
+          success: false,
+          message: `Duplicate engine in request: ${eng}`,
+        });
+      }
+
+      if (seenChassis.has(chs)) {
+        return res.status(400).json({
+          success: false,
+          message: `Duplicate chassis in request: ${chs}`,
+        });
+      }
+
+      seenEngine.add(eng);
+      seenChassis.add(chs);
+    }
+
+    await conn.beginTransaction();
+
+    // ----------------------------
+    // Update header
+    // ----------------------------
+    const updates = [];
+    const values = [];
+
+   updates.push("purchase_from = ?");
+values.push(purchase_from);
+
+updates.push("transporter_name = ?");
+values.push(transporter_name);
+
+updates.push("lr_number = ?");
+values.push(lr_number);
+
+updates.push("transport_vehicle_number = ?");
+values.push(transport_vehicle_number);
+
+updates.push("invoice_number = ?");
+values.push(invoice_number);
+
+    if (schema.hasInvoiceDate) {
+      updates.push("invoice_date = ?");
+      values.push(invoice_date);
+    }
+
+    updates.push("purchase_date = ?");
+    values.push(purchase_date);
+
+    if (schema.headerAmountCol) {
+      updates.push(`${schema.headerAmountCol} = ?`);
+      values.push(purchase_amount);
+    }
+
+    updates.push("notes = ?");
+    values.push(notes);
+
+    values.push(id);
+
+    await conn.query(
+      `
+      UPDATE vehicle_purchases
+      SET ${updates.join(", ")}
+      WHERE id = ?
+      `,
+      values
+    );
+
+    const priceCol = schema.itemPriceCol || "purchase_price";
+
+    // fetch current purchase items with linked vehicle ids
+    const [dbItems] = await conn.query(
+      `
+      SELECT id, contact_vehicle_id
+      FROM vehicle_purchase_items
+      WHERE purchase_id = ?
+      `,
+      [id]
+    );
+
+    const allowedMap = new Map(
+      dbItems.map((r) => [Number(r.id), r.contact_vehicle_id ? Number(r.contact_vehicle_id) : null])
+    );
+
+    for (const row of items) {
+      const itemId = Number(row.id);
+      if (!itemId || !allowedMap.has(itemId)) {
+        throw new Error(`Invalid item id: ${row.id}`);
+      }
+
+      const linkedVehicleId = allowedMap.get(itemId);
+
+      const engine_number = normalizeToken(row.engine_number || "");
+      const chassis_number = normalizeToken(row.chassis_number || "");
+
+      const model_id =
+        row.model_id != null && String(row.model_id).trim() !== ""
+          ? Number(row.model_id)
+          : null;
+
+      const variant_id =
+        row.variant_id != null && String(row.variant_id).trim() !== ""
+          ? Number(row.variant_id)
+          : null;
+
+      const color =
+        row.color != null && String(row.color).trim() !== ""
+          ? String(row.color).trim()
+          : null;
+
+      const purchase_price =
+        row.purchase_price != null && String(row.purchase_price).trim() !== ""
+          ? Number(row.purchase_price)
+          : null;
+
+      // prevent conflict with OTHER purchase items
+      const [dupItemRows] = await conn.query(
+        `
+        SELECT id
+        FROM vehicle_purchase_items
+        WHERE id <> ?
+          AND (chassis_number = ? OR engine_number = ?)
+        LIMIT 1
+        `,
+        [itemId, chassis_number, engine_number]
+      );
+
+      if (dupItemRows.length) {
+        throw new Error(
+          `Engine/chassis already exists in another purchase item (${engine_number} / ${chassis_number})`
+        );
+      }
+
+      // if linked to contact_vehicles, prevent conflict there too (excluding same linked vehicle)
+      const [dupVehicleRows] = await conn.query(
+        `
+        SELECT id
+        FROM contact_vehicles
+        WHERE id <> ?
+          AND (chassis_number = ? OR engine_number = ?)
+        LIMIT 1
+        `,
+        [linkedVehicleId || 0, chassis_number, engine_number]
+      );
+
+      if (dupVehicleRows.length) {
+        throw new Error(
+          `Engine/chassis already exists in vehicle master (${engine_number} / ${chassis_number})`
+        );
+      }
+
+      // update purchase item
+      await conn.query(
+        `
+        UPDATE vehicle_purchase_items
+        SET
+          engine_number = ?,
+          chassis_number = ?,
+          model_id = ?,
+          variant_id = ?,
+          color = ?,
+          ${priceCol} = ?
+        WHERE id = ? AND purchase_id = ?
+        `,
+        [
+          engine_number,
+          chassis_number,
+          model_id,
+          variant_id,
+          color,
+          purchase_price,
+          itemId,
+          id,
+        ]
+      );
+
+      // sync linked vehicle master row
+      if (linkedVehicleId) {
+        const cvUpdates = [
+          "engine_number = ?",
+          "chassis_number = ?",
+          "model_id = ?",
+          "variant_id = ?",
+          "color = ?",
+        ];
+        const cvValues = [
+          engine_number,
+          chassis_number,
+          model_id,
+          variant_id,
+          color,
+        ];
+
+        // update vehicle_model text if columns exist
+        if (schema.contactVehicleCols.has("vehicle_model")) {
+          let vehicle_model = null;
+
+          if (variant_id) {
+            const [variantRows] = await conn.query(
+              `SELECT variant_name FROM vehicle_variants WHERE id = ? LIMIT 1`,
+              [variant_id]
+            );
+            if (variantRows.length) {
+              vehicle_model = String(variantRows[0].variant_name || "").trim() || null;
+            }
+          }
+
+          if (!vehicle_model && model_id) {
+            const [modelRows] = await conn.query(
+              `SELECT model_name FROM vehicle_models WHERE id = ? LIMIT 1`,
+              [model_id]
+            );
+            if (modelRows.length) {
+              vehicle_model = String(modelRows[0].model_name || "").trim() || null;
+            }
+          }
+
+          cvUpdates.push("vehicle_model = ?");
+          cvValues.push(vehicle_model);
+        }
+
+        cvValues.push(linkedVehicleId);
+
+        await conn.query(
+          `
+          UPDATE contact_vehicles
+          SET ${cvUpdates.join(", ")}
+          WHERE id = ?
+          `,
+          cvValues
+        );
+      }
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: "Purchase updated successfully",
+    });
+  } catch (e) {
+    try {
+      await conn.rollback();
+    } catch {}
+    console.error("purchases updatePurchaseById:", e);
+    return res.status(500).json({
+      success: false,
+      message: e.message || "Server error",
+    });
+  } finally {
+    try {
+      conn.release();
+    } catch {}
+  }
+};

@@ -27,6 +27,10 @@ export default function LoginPage() {
       });
 
       login(res.data.token, res.data.user);
+
+      // important: show festival effect once after fresh login
+      sessionStorage.setItem("show_festival_effect", "1");
+
       router.replace("/dashboard");
     } catch (err: any) {
       setError(err?.response?.data?.message || "Invalid login credentials");

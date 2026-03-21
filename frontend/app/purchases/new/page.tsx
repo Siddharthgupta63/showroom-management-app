@@ -11,7 +11,6 @@ import { usePermissions } from "@/hooks/usePermissions";
 type ModelRow = { id: number; model_name: string; is_active?: number };
 type VariantRow = { id: number; model_id: number; variant_name: string; is_active?: number };
 
-// ✅ CHANGE: DDItem now supports label (annotation)
 type DDItem = { id: number; value: string; label?: string | null };
 
 type VehicleStatus = {
@@ -54,8 +53,6 @@ function matchOption(val: string | null | undefined, options: DDItem[]) {
   const hit = options.find((o) => normalizeStr(o.value) === d);
   return hit ? hit.value : "";
 }
-
-// ✅ NEW helper: display text for color
 function formatColorLabel(item: DDItem) {
   return item.label ? `${item.value} — ${item.label}` : item.value;
 }
@@ -83,12 +80,17 @@ export default function NewPurchasePage() {
   }, []);
 
   const isOwnerAdmin = role === "owner" || role === "admin";
-  // ✅ FIX: Purchases create is controlled by manage_purchases
   const canCreate = isOwnerAdmin || hasPermission("manage_purchases");
 
   // ---------------- purchase header ----------------
   const [purchaseFrom, setPurchaseFrom] = useState("");
   const [purchaseFromOptions, setPurchaseFromOptions] = useState<DDItem[]>([]);
+
+  const [transporterName, setTransporterName] = useState("");
+  const [transporterOptions, setTransporterOptions] = useState<DDItem[]>([]);
+
+  const [lrNumber, setLrNumber] = useState("");
+  const [transportVehicleNumber, setTransportVehicleNumber] = useState("");
 
   const [make, setMake] = useState("");
   const [makeOptions, setMakeOptions] = useState<DDItem[]>([]);
@@ -112,7 +114,6 @@ export default function NewPurchasePage() {
   const [variantId, setVariantId] = useState<string>("");
   const [color, setColor] = useState<string>("");
 
-  // inline preview for current input
   const [inputStatus, setInputStatus] = useState<VehicleStatus | null>(null);
   const inputTimer = useRef<any>(null);
 
@@ -204,7 +205,7 @@ export default function NewPurchasePage() {
   const loadDropdowns = async () => {
     try {
       const res = await api.get("/api/dropdowns", {
-        params: { types: "vehicle_make,vehicle_color,vehicle_purchase_from" },
+        params: { types: "vehicle_make,vehicle_color,vehicle_purchase_from,vehicle_transporter_name" },
       });
       const data = res.data?.data || {};
 
@@ -212,7 +213,6 @@ export default function NewPurchasePage() {
         .map((x: any) => ({ id: Number(x.id), value: String(x.value || "") }))
         .filter((x: DDItem) => x.value);
 
-      // ✅ CHANGE: read label for vehicle_color
       const colors: DDItem[] = (data.vehicle_color || [])
         .map((x: any) => ({
           id: Number(x.id),
@@ -225,16 +225,23 @@ export default function NewPurchasePage() {
         .map((x: any) => ({ id: Number(x.id), value: String(x.value || "") }))
         .filter((x: DDItem) => x.value);
 
+      const transporters: DDItem[] = (data.vehicle_transporter_name || [])
+        .map((x: any) => ({ id: Number(x.id), value: String(x.value || "") }))
+        .filter((x: DDItem) => x.value);
+
       setMakeOptions(makes);
       setColorOptions(colors);
       setPurchaseFromOptions(purchaseFroms);
+      setTransporterOptions(transporters);
 
       if (!make && makes.length) setMake(makes[0].value);
       if (!purchaseFrom && purchaseFroms.length) setPurchaseFrom(purchaseFroms[0].value);
+      if (!transporterName && transporters.length) setTransporterName(transporters[0].value);
     } catch {
       setMakeOptions([]);
       setColorOptions([]);
       setPurchaseFromOptions([]);
+      setTransporterOptions([]);
       if (!make) setMake("HERO BIKE");
     }
   };
@@ -259,10 +266,13 @@ export default function NewPurchasePage() {
       return;
     }
     try {
-      const res = await api.post("/api/vehicles/_duplicate/status", { engine_number: eng, chassis_number: chs });
+      const res = await api.post("/api/vehicles/_duplicate/status", {
+        engine_number: eng,
+        chassis_number: chs,
+      });
       setInputStatus(res.data?.status || null);
     } catch {
-      // silent (don’t block typing)
+      // silent
     }
   };
 
@@ -294,18 +304,29 @@ export default function NewPurchasePage() {
 
     try {
       const res = await api.post("/api/vehicles/_duplicate/status-bulk", payload);
-      const data: Array<{ engine_number: string; chassis_number: string; status: VehicleStatus }> = res.data?.data || [];
+      const data: Array<{
+        engine_number: string;
+        chassis_number: string;
+        status: VehicleStatus;
+      }> = res.data?.data || [];
 
-      // build map by engine+chassis
       const map = new Map<string, VehicleStatus>();
       for (const it of data) {
-        const key = `${String(it.engine_number || "").trim().toUpperCase()}__${String(it.chassis_number || "").trim().toUpperCase()}`;
+        const key = `${String(it.engine_number || "").trim().toUpperCase()}__${String(
+          it.chassis_number || ""
+        )
+          .trim()
+          .toUpperCase()}`;
         map.set(key, it.status);
       }
 
       setManualRows((prev) =>
         prev.map((r) => {
-          const key = `${String(r.engine_number || "").trim().toUpperCase()}__${String(r.chassis_number || "").trim().toUpperCase()}`;
+          const key = `${String(r.engine_number || "").trim().toUpperCase()}__${String(
+            r.chassis_number || ""
+          )
+            .trim()
+            .toUpperCase()}`;
           const st = map.get(key) || r.status || null;
           return { ...r, status: st };
         })
@@ -337,9 +358,10 @@ export default function NewPurchasePage() {
     if (!c) return setErr("Chassis number is required");
     if (!e) return setErr("Engine number is required");
 
-    // prevent local duplicates
     const dupLocal = manualRows.some(
-      (r) => normalizeStr(r.chassis_number) === normalizeStr(c) || normalizeStr(r.engine_number) === normalizeStr(e)
+      (r) =>
+        normalizeStr(r.chassis_number) === normalizeStr(c) ||
+        normalizeStr(r.engine_number) === normalizeStr(e)
     );
     if (dupLocal) return setErr("This chassis/engine is already in the pending list.");
 
@@ -348,7 +370,8 @@ export default function NewPurchasePage() {
 
     const modelName = mid ? models.find((m) => m.id === mid)?.model_name || "" : "";
     const vid = Number(variantId || 0);
-    const variantName = mid && vid ? (variantsByModel[mid] || []).find((v) => v.id === vid)?.variant_name || "" : "";
+    const variantName =
+      mid && vid ? (variantsByModel[mid] || []).find((v) => v.id === vid)?.variant_name || "" : "";
     const vehicle_model = [modelName, variantName].filter(Boolean).join(" ").trim() || null;
 
     const newRow: ManualRow = {
@@ -359,7 +382,7 @@ export default function NewPurchasePage() {
       ui_variant_id: variantId || "",
       ui_color: color || "",
       vehicle_model,
-      status: inputStatus || null, // show instant status (then bulk refresh keeps it accurate)
+      status: inputStatus || null,
     };
 
     setManualRows((prev) => [...prev, newRow]);
@@ -393,7 +416,9 @@ export default function NewPurchasePage() {
       if (!ch || !en) continue;
 
       const exists = manualRows.some(
-        (m) => normalizeStr(m.chassis_number) === normalizeStr(ch) || normalizeStr(m.engine_number) === normalizeStr(en)
+        (m) =>
+          normalizeStr(m.chassis_number) === normalizeStr(ch) ||
+          normalizeStr(m.engine_number) === normalizeStr(en)
       );
       if (exists) continue;
 
@@ -402,9 +427,12 @@ export default function NewPurchasePage() {
 
       const modelName = mid ? models.find((m) => m.id === mid)?.model_name || "" : "";
       const vid = Number(r.variant_id || 0);
-      const variantName = mid && vid ? (variantsByModel[mid] || []).find((v) => v.id === vid)?.variant_name || "" : "";
+      const variantName =
+        mid && vid ? (variantsByModel[mid] || []).find((v) => v.id === vid)?.variant_name || "" : "";
 
-      const vehicle_model = String([r.model || modelName, r.variant || variantName].filter(Boolean).join(" ").trim() || "") || null;
+      const vehicle_model =
+        String([r.model || modelName, r.variant || variantName].filter(Boolean).join(" ").trim() || "") ||
+        null;
 
       const byCode = matchOption(r.color_code || "", colorOptions);
       const byName = matchOption(r.color || "", colorOptions);
@@ -417,7 +445,7 @@ export default function NewPurchasePage() {
         ui_variant_id: r.variant_id ? String(r.variant_id) : "",
         ui_color: byCode || byName || "",
         vehicle_model,
-        status: r.status || null, // initial preview from extractor (then bulk refresh reconfirms)
+        status: r.status || null,
       });
     }
 
@@ -483,6 +511,9 @@ export default function NewPurchasePage() {
 
       const payload = {
         purchase_from: purchaseFrom.trim(),
+        transporter_name: transporterName.trim() || null,
+        lr_number: lrNumber.trim() || null,
+        transport_vehicle_number: transportVehicleNumber.trim() || null,
         invoice_number: purchaseInvoiceNo.trim() || null,
         invoice_date: extract?.invoice_date || null,
         purchase_date: purchaseDate || null,
@@ -497,7 +528,9 @@ export default function NewPurchasePage() {
       const summary = res.data?.summary;
 
       setOk(
-        `Purchase saved ✅ Purchase ID: ${res.data?.purchase_id}. Inserted: ${summary?.inserted || 0}, Skipped: ${summary?.skipped || 0}`
+        `Purchase saved ✅ Purchase ID: ${res.data?.purchase_id}. Inserted: ${
+          summary?.inserted || 0
+        }, Skipped: ${summary?.skipped || 0}`
       );
 
       router.push("/purchases");
@@ -558,8 +591,28 @@ export default function NewPurchasePage() {
               </div>
 
               <div>
+                <label className="text-sm font-medium">Transporter Name</label>
+                <select
+                  value={transporterName}
+                  onChange={(e) => setTransporterName(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                >
+                  <option value="">-- Select Transporter --</option>
+                  {transporterOptions.map((x) => (
+                    <option key={x.id} value={x.value}>
+                      {x.value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
                 <label className="text-sm font-medium">Make</label>
-                <select value={make} onChange={(e) => setMake(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2">
+                <select
+                  value={make}
+                  onChange={(e) => setMake(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                >
                   <option value="">-- Select Make --</option>
                   {makeOptions.map((m) => (
                     <option key={m.id} value={m.value}>
@@ -570,28 +623,68 @@ export default function NewPurchasePage() {
               </div>
 
               <div>
-                <label className="text-sm font-medium">Purchase Invoice Number</label>
-                <input value={purchaseInvoiceNo} onChange={(e) => setPurchaseInvoiceNo(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" />
+                <label className="text-sm font-medium">Purchase Date</label>
+                <input
+                  type="date"
+                  value={purchaseDate}
+                  onChange={(e) => setPurchaseDate(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
               </div>
 
               <div>
-                <label className="text-sm font-medium">Purchase Date</label>
-                <input type="date" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" />
+                <label className="text-sm font-medium">Purchase Invoice Number</label>
+                <input
+                  value={purchaseInvoiceNo}
+                  onChange={(e) => setPurchaseInvoiceNo(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">LR Number</label>
+                <input
+                  value={lrNumber}
+                  onChange={(e) => setLrNumber(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
               </div>
 
               <div>
                 <label className="text-sm font-medium">Purchase Amount</label>
-                <input value={purchaseAmount} onChange={(e) => setPurchaseAmount(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" />
+                <input
+                  value={purchaseAmount}
+                  onChange={(e) => setPurchaseAmount(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Vehicle Number (optional)</label>
+                <input
+                  value={transportVehicleNumber}
+                  onChange={(e) => setTransportVehicleNumber(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
               </div>
 
               <div>
                 <label className="text-sm font-medium">Contact ID (optional)</label>
-                <input value={contactId} onChange={(e) => setContactId(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" />
+                <input
+                  value={contactId}
+                  onChange={(e) => setContactId(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                />
               </div>
 
               <div className="md:col-span-2">
                 <label className="text-sm font-medium">Notes (optional)</label>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" rows={3} />
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
+                  rows={3}
+                />
               </div>
             </div>
 
@@ -602,17 +695,29 @@ export default function NewPurchasePage() {
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium">Chassis Number</label>
-                  <input value={chassis} onChange={(e) => setChassis(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" />
+                  <input
+                    value={chassis}
+                    onChange={(e) => setChassis(e.target.value)}
+                    className="mt-1 w-full border rounded-lg px-3 py-2"
+                  />
                 </div>
 
                 <div>
                   <label className="text-sm font-medium">Engine Number</label>
-                  <input value={engine} onChange={(e) => setEngine(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" />
+                  <input
+                    value={engine}
+                    onChange={(e) => setEngine(e.target.value)}
+                    className="mt-1 w-full border rounded-lg px-3 py-2"
+                  />
                 </div>
 
                 <div>
                   <label className="text-sm font-medium">Model</label>
-                  <select value={modelId} onChange={(e) => setModelId(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2">
+                  <select
+                    value={modelId}
+                    onChange={(e) => setModelId(e.target.value)}
+                    className="mt-1 w-full border rounded-lg px-3 py-2"
+                  >
                     <option value="">Other</option>
                     {models.map((m) => (
                       <option key={m.id} value={String(m.id)}>
@@ -624,7 +729,12 @@ export default function NewPurchasePage() {
 
                 <div>
                   <label className="text-sm font-medium">Variant</label>
-                  <select value={variantId} onChange={(e) => setVariantId(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2" disabled={!modelId}>
+                  <select
+                    value={variantId}
+                    onChange={(e) => setVariantId(e.target.value)}
+                    className="mt-1 w-full border rounded-lg px-3 py-2"
+                    disabled={!modelId}
+                  >
                     <option value="">Other</option>
                     {(variantsByModel[Number(modelId || 0)] || []).map((v) => (
                       <option key={v.id} value={String(v.id)}>
@@ -636,7 +746,11 @@ export default function NewPurchasePage() {
 
                 <div>
                   <label className="text-sm font-medium">Color</label>
-                  <select value={color} onChange={(e) => setColor(e.target.value)} className="mt-1 w-full border rounded-lg px-3 py-2">
+                  <select
+                    value={color}
+                    onChange={(e) => setColor(e.target.value)}
+                    className="mt-1 w-full border rounded-lg px-3 py-2"
+                  >
                     <option value="">-- Select Color --</option>
                     {colorOptions.map((c) => (
                       <option key={c.id} value={c.value}>
@@ -647,13 +761,25 @@ export default function NewPurchasePage() {
                 </div>
 
                 <div className="flex items-end gap-3">
-                  <button type="button" onClick={addManualToList} className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">
+                  <button
+                    type="button"
+                    onClick={addManualToList}
+                    className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                  >
                     + Add to List
                   </button>
                   <div className="text-sm">
                     <div className="text-gray-600">Preview</div>
-                    <div>{engine.trim() && chassis.trim() ? statusBadge(inputStatus) : <span className="text-gray-500">Enter engine+chassis</span>}</div>
-                    {inputStatus?.label ? <div className="text-xs text-gray-600">{inputStatus.label}</div> : null}
+                    <div>
+                      {engine.trim() && chassis.trim() ? (
+                        statusBadge(inputStatus)
+                      ) : (
+                        <span className="text-gray-500">Enter engine+chassis</span>
+                      )}
+                    </div>
+                    {inputStatus?.label ? (
+                      <div className="text-xs text-gray-600">{inputStatus.label}</div>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -681,7 +807,9 @@ export default function NewPurchasePage() {
 
                           <td className="px-3 py-2 border-b">
                             {statusBadge(r.status)}
-                            {r.status?.label ? <div className="text-xs text-gray-600">{r.status.label}</div> : null}
+                            {r.status?.label ? (
+                              <div className="text-xs text-gray-600">{r.status.label}</div>
+                            ) : null}
                           </td>
 
                           <td className="px-3 py-2 border-b font-mono">{r.engine_number}</td>
@@ -734,7 +862,10 @@ export default function NewPurchasePage() {
                           </td>
 
                           <td className="px-3 py-2 border-b">
-                            <button onClick={() => removeManualRow(r._k)} className="px-3 py-1 border rounded hover:bg-gray-50">
+                            <button
+                              onClick={() => removeManualRow(r._k)}
+                              className="px-3 py-1 border rounded hover:bg-gray-50"
+                            >
                               Remove
                             </button>
                           </td>
@@ -768,7 +899,9 @@ export default function NewPurchasePage() {
               <div className="flex justify-between items-start flex-wrap gap-2">
                 <div>
                   <div className="font-semibold">Purchase Invoice PDF → Auto Extract (Optional)</div>
-                  <div className="text-sm text-gray-600">Extract vehicles then merge them into the manual list.</div>
+                  <div className="text-sm text-gray-600">
+                    Extract vehicles then merge them into the manual list.
+                  </div>
                 </div>
 
                 <label className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50 cursor-pointer">
@@ -788,7 +921,9 @@ export default function NewPurchasePage() {
                 </label>
               </div>
 
-              {extract?.raw_hint ? <div className="mt-3 text-sm text-amber-700">{extract.raw_hint}</div> : null}
+              {extract?.raw_hint ? (
+                <div className="mt-3 text-sm text-amber-700">{extract.raw_hint}</div>
+              ) : null}
 
               {extract ? (
                 <div className="mt-4">
@@ -799,10 +934,16 @@ export default function NewPurchasePage() {
                   </div>
 
                   <div className="mt-3 flex gap-2 flex-wrap">
-                    <button onClick={mergeExtractIntoList} className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50">
+                    <button
+                      onClick={mergeExtractIntoList}
+                      className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50"
+                    >
                       Add Extracted Vehicles to List
                     </button>
-                    <button onClick={() => setExtract(null)} className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50">
+                    <button
+                      onClick={() => setExtract(null)}
+                      className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50"
+                    >
                       Clear Extract
                     </button>
                   </div>

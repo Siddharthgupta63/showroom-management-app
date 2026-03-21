@@ -1,4 +1,3 @@
-// backend/controllers/dropdownsController.js
 const db = require("../db");
 
 const ALLOWED_TYPES = new Set([
@@ -13,6 +12,7 @@ const ALLOWED_TYPES = new Set([
   "vehicle_make",
   "vehicle_color",
   "vehicle_purchase_from",
+  "vehicle_transporter_name",
   "nominee_relation",
   "rc_agent",
 ]);
@@ -29,7 +29,6 @@ function normLabel(v) {
 }
 
 exports.getDropdowns = async (req, res) => {
-  // App usage: active only
   try {
     const typesParam = String(req.query.types || "").trim();
     const types = typesParam
@@ -64,7 +63,6 @@ exports.getDropdowns = async (req, res) => {
 };
 
 exports.getDropdownsAdmin = async (req, res) => {
-  // Admin view: active + inactive
   try {
     const type = normType(req.query.type || "");
     const includeInactive = String(req.query.includeInactive || "1") === "1";
@@ -105,7 +103,6 @@ exports.getDropdownsAdmin = async (req, res) => {
 };
 
 exports.addDropdownValue = async (req, res) => {
-  // ✅ When type=branch: also create/activate showroom_branches
   let conn;
   try {
     const type = normType(req.params.type);
@@ -118,16 +115,13 @@ exports.addDropdownValue = async (req, res) => {
       return res.status(400).json({ success: false, message: "Value is required" });
     }
 
-    // label is OPTIONAL (used mainly for vehicle_color full form)
     const label = normLabel(req.body?.label);
-
     const userId = req.user?.id || null;
 
     conn = await db.getConnection();
     await conn.beginTransaction();
 
     if (type === "branch") {
-      // Upsert into showroom_branches first (source of truth for branch_id)
       const [bRows] = await conn.query(
         `SELECT id FROM showroom_branches WHERE branch_name = ? LIMIT 1`,
         [value]
@@ -136,7 +130,6 @@ exports.addDropdownValue = async (req, res) => {
       if (bRows.length > 0) {
         await conn.query(`UPDATE showroom_branches SET is_active = 1 WHERE id = ?`, [bRows[0].id]);
       } else {
-        // insert -> your MySQL trigger will create dropdown_master row too
         await conn.query(
           `INSERT INTO showroom_branches (branch_name, address, is_active) VALUES (?,?,1)`,
           [value, null]
@@ -144,14 +137,12 @@ exports.addDropdownValue = async (req, res) => {
       }
     }
 
-    // ✅ Safe upsert for dropdown_master WITHOUT requiring a UNIQUE index
     const [existing] = await conn.query(
       `SELECT id FROM dropdown_master WHERE type = ? AND value = ? LIMIT 1`,
       [type, value]
     );
 
     if (existing.length > 0) {
-      // reactivate + update label if provided (keeps value same)
       await conn.query(
         `UPDATE dropdown_master SET is_active = 1, label = COALESCE(?, label) WHERE id = ?`,
         [label, existing[0].id]
@@ -179,7 +170,6 @@ exports.addDropdownValue = async (req, res) => {
 };
 
 exports.setActive = async (req, res) => {
-  // ✅ If disabling/enabling a branch dropdown, sync showroom_branches.is_active
   let conn;
   try {
     const id = Number(req.params.id);

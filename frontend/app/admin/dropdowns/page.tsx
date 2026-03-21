@@ -30,6 +30,7 @@ const TYPES: Array<{ key: string; label: string }> = [
   { key: "vehicle_make", label: "Vehicle Make" },
   { key: "vehicle_color", label: "Vehicle Color (Code + Full Form)" },
   { key: "vehicle_purchase_from", label: "Purchase From" },
+  { key: "vehicle_transporter_name", label: "Transporter Name" },
   { key: "nominee_relation", label: "Nominee Relation" },
   { key: "rc_agent", label: "RC Agent" },
 
@@ -48,7 +49,6 @@ export default function AdminDropdownsPage() {
   }, []);
 
   const isOwnerAdmin = role === "owner" || role === "admin";
-
   const canManage = isOwnerAdmin;
 
   const [type, setType] = useState<string>(TYPES[0].key);
