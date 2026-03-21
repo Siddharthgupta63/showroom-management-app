@@ -27,6 +27,11 @@ type Item = {
   contact_vehicle_id: number | null;
   engine_number: string | null;
   chassis_number: string | null;
+  model_id?: number | null;
+  variant_id?: number | null;
+  model_name?: string | null;
+  variant_name?: string | null;
+  vehicle_name?: string | null;
   color: string | null;
   purchase_price: number | null;
   status_code: string | null;
@@ -62,7 +67,9 @@ export default function PurchaseViewPage() {
 
   const counts = useMemo(() => {
     const total = items.length;
-    const inserted = items.filter((x) => String(x.status_code || "").toLowerCase() === "in_stock").length;
+    const inserted = items.filter(
+      (x) => String(x.status_code || "").toLowerCase() === "in_stock"
+    ).length;
     const skipped = total - inserted;
     return { total, inserted, skipped };
   }, [items]);
@@ -128,7 +135,10 @@ export default function PurchaseViewPage() {
               </div>
 
               <div className="flex gap-2 flex-wrap">
-                <Link href="/purchases" className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50">
+                <Link
+                  href="/purchases"
+                  className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50"
+                >
                   Back
                 </Link>
 
@@ -206,7 +216,9 @@ export default function PurchaseViewPage() {
                   <div>
                     <div className="text-gray-600">Amount</div>
                     <div className="font-semibold">
-                      {purchase.purchase_amount != null ? Number(purchase.purchase_amount).toFixed(2) : "-"}
+                      {purchase.purchase_amount != null
+                        ? Number(purchase.purchase_amount).toFixed(2)
+                        : "-"}
                     </div>
                   </div>
 
@@ -240,6 +252,7 @@ export default function PurchaseViewPage() {
                 <thead className="bg-gray-100">
                   <tr>
                     <th className="px-3 py-2 border-b text-left">#</th>
+                    <th className="px-3 py-2 border-b text-left">Vehicle Name</th>
                     <th className="px-3 py-2 border-b text-left">Chassis</th>
                     <th className="px-3 py-2 border-b text-left">Engine</th>
                     <th className="px-3 py-2 border-b text-left">Color</th>
@@ -253,11 +266,16 @@ export default function PurchaseViewPage() {
                     items.map((it, idx) => (
                       <tr key={it.id} className={rowBg(it.status_code)}>
                         <td className="px-3 py-2 border-b">{idx + 1}</td>
+                        <td className="px-3 py-2 border-b">
+                          {it.vehicle_name || it.variant_name || it.model_name || "-"}
+                        </td>
                         <td className="px-3 py-2 border-b">{it.chassis_number || "-"}</td>
                         <td className="px-3 py-2 border-b">{it.engine_number || "-"}</td>
                         <td className="px-3 py-2 border-b">{it.color || "-"}</td>
                         <td className="px-3 py-2 border-b text-right">
-                          {it.purchase_price != null ? Number(it.purchase_price).toFixed(2) : "-"}
+                          {it.purchase_price != null
+                            ? Number(it.purchase_price).toFixed(2)
+                            : "-"}
                         </td>
                         <td className="px-3 py-2 border-b">{badge(it.status_code)}</td>
                         <td className="px-3 py-2 border-b text-xs text-gray-600">
@@ -268,7 +286,7 @@ export default function PurchaseViewPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={7} className="px-3 py-4 text-gray-500">
+                      <td colSpan={8} className="px-3 py-4 text-gray-500">
                         {loading ? "Loading..." : "No items."}
                       </td>
                     </tr>

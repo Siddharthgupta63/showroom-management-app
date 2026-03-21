@@ -394,6 +394,9 @@ const headerVals = [
 // =====================================================
 // GET /api/purchases/:id
 // =====================================================
+// =====================================================
+// GET /api/purchases/:id
+// =====================================================
 exports.getPurchaseById = async (req, res) => {
   try {
     const schema = await getSchemaCached();
@@ -409,38 +412,62 @@ exports.getPurchaseById = async (req, res) => {
         p.*,
         ${headerAmountSel}
       FROM vehicle_purchases p
-      WHERE p.id=? LIMIT 1
+      WHERE p.id = ?
+      LIMIT 1
       `,
       [id]
     );
-    if (!p.length) return res.status(404).json({ success: false, message: "Not found" });
+
+    if (!p.length) {
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
 
     const priceCol = schema.itemPriceCol || "purchase_price";
 
     const [items] = await db.query(
       `
       SELECT
-        id,
-        purchase_id,
-        contact_vehicle_id,
-        chassis_number,
-        engine_number,
-        model_id,
-        variant_id,
-        color,
-        ${priceCol} AS purchase_price,
-        status_code,
-        existing_vehicle_id,
-        existing_sale_id,
-        created_at
-      FROM vehicle_purchase_items
-      WHERE purchase_id=?
-      ORDER BY id ASC
+        i.id,
+        i.purchase_id,
+        i.contact_vehicle_id,
+        i.chassis_number,
+        i.engine_number,
+        i.model_id,
+        i.variant_id,
+        vm.model_name,
+        vv.variant_name,
+        TRIM(
+          CONCAT(
+            COALESCE(vm.model_name, ''),
+            CASE
+              WHEN vv.variant_name IS NOT NULL AND vv.variant_name <> ''
+              THEN CONCAT(' / ', vv.variant_name)
+              ELSE ''
+            END
+          )
+        ) AS vehicle_name,
+        i.color,
+        i.${priceCol} AS purchase_price,
+        i.status_code,
+        i.existing_vehicle_id,
+        i.existing_sale_id,
+        i.created_at
+      FROM vehicle_purchase_items i
+      LEFT JOIN vehicle_models vm ON vm.id = i.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = i.variant_id
+      WHERE i.purchase_id = ?
+      ORDER BY i.id ASC
       `,
       [id]
     );
 
-    return res.json({ success: true, data: { purchase: p[0], items } });
+    return res.json({
+      success: true,
+      data: {
+        purchase: p[0],
+        items,
+      },
+    });
   } catch (e) {
     console.error("purchases getPurchaseById:", e);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -638,6 +665,9 @@ SUM(CASE WHEN status_code <> 'in_stock' THEN 1 ELSE 0 END) AS skipped_items
 // =====================================================
 // GET /api/purchases/:id/_export-items
 // =====================================================
+// =====================================================
+// GET /api/purchases/:id/_export-items
+// =====================================================
 exports.exportPurchaseItemsExcel = async (req, res) => {
   try {
     const schema = await getSchemaCached();
@@ -656,33 +686,51 @@ exports.exportPurchaseItemsExcel = async (req, res) => {
         p.purchase_date,
         ${headerAmountSel}
       FROM vehicle_purchases p
-      WHERE p.id=? LIMIT 1
+      WHERE p.id = ?
+      LIMIT 1
       `,
       [id]
     );
-    if (!p.length) return res.status(404).json({ success: false, message: "Not found" });
+
+    if (!p.length) {
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
 
     const priceCol = schema.itemPriceCol || "purchase_price";
 
     const [items] = await db.query(
       `
       SELECT
-        id,
-        purchase_id,
-        contact_vehicle_id,
-        engine_number,
-        chassis_number,
-        model_id,
-        variant_id,
-        color,
-        ${priceCol} AS purchase_price,
-        status_code,
-        existing_vehicle_id,
-        existing_sale_id,
-        created_at
-      FROM vehicle_purchase_items
-      WHERE purchase_id=?
-      ORDER BY id ASC
+        i.id,
+        i.purchase_id,
+        i.contact_vehicle_id,
+        i.engine_number,
+        i.chassis_number,
+        i.model_id,
+        i.variant_id,
+        vm.model_name,
+        vv.variant_name,
+        TRIM(
+          CONCAT(
+            COALESCE(vm.model_name, ''),
+            CASE
+              WHEN vv.variant_name IS NOT NULL AND vv.variant_name <> ''
+              THEN CONCAT(' / ', vv.variant_name)
+              ELSE ''
+            END
+          )
+        ) AS vehicle_name,
+        i.color,
+        i.${priceCol} AS purchase_price,
+        i.status_code,
+        i.existing_vehicle_id,
+        i.existing_sale_id,
+        i.created_at
+      FROM vehicle_purchase_items i
+      LEFT JOIN vehicle_models vm ON vm.id = i.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = i.variant_id
+      WHERE i.purchase_id = ?
+      ORDER BY i.id ASC
       `,
       [id]
     );
@@ -700,6 +748,7 @@ exports.exportPurchaseItemsExcel = async (req, res) => {
     ws.columns = [
       { header: "Item ID", key: "id", width: 10 },
       { header: "Vehicle ID", key: "contact_vehicle_id", width: 12 },
+      { header: "Vehicle Name", key: "vehicle_name", width: 28 },
       { header: "Engine", key: "engine_number", width: 20 },
       { header: "Chassis", key: "chassis_number", width: 22 },
       { header: "Color", key: "color", width: 10 },
@@ -712,8 +761,15 @@ exports.exportPurchaseItemsExcel = async (req, res) => {
 
     items.forEach((r) => ws.addRow(r));
 
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="purchase_${id}_items.xlsx"`);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="purchase_${id}_items.xlsx"`
+    );
+
     await wb.xlsx.write(res);
     res.end();
   } catch (e) {
@@ -729,6 +785,11 @@ exports.exportPurchaseItemsExcel = async (req, res) => {
 // =====================================================
 // PUT /api/purchases/:id
 // Update purchase header + existing item rows
+// =====================================================
+// =====================================================
+// PUT /api/purchases/:id
+// Update purchase header + existing item rows
+// Also sync linked contact_vehicles safely
 // =====================================================
 // =====================================================
 // PUT /api/purchases/:id
@@ -758,6 +819,22 @@ exports.updatePurchaseById = async (req, res) => {
 
     const purchase_from =
       body.purchase_from != null ? String(body.purchase_from).trim() : null;
+
+    const transporter_name =
+      body.transporter_name != null && String(body.transporter_name).trim() !== ""
+        ? String(body.transporter_name).trim()
+        : null;
+
+    const lr_number =
+      body.lr_number != null && String(body.lr_number).trim() !== ""
+        ? String(body.lr_number).trim()
+        : null;
+
+    const transport_vehicle_number =
+      body.transport_vehicle_number != null &&
+      String(body.transport_vehicle_number).trim() !== ""
+        ? String(body.transport_vehicle_number).trim()
+        : null;
 
     const invoice_number =
       body.invoice_number != null ? String(body.invoice_number).trim() : null;
@@ -802,7 +879,6 @@ exports.updatePurchaseById = async (req, res) => {
       });
     }
 
-    // local duplicate check inside request payload
     const seenEngine = new Set();
     const seenChassis = new Set();
 
@@ -843,20 +919,20 @@ exports.updatePurchaseById = async (req, res) => {
     const updates = [];
     const values = [];
 
-   updates.push("purchase_from = ?");
-values.push(purchase_from);
+    updates.push("purchase_from = ?");
+    values.push(purchase_from);
 
-updates.push("transporter_name = ?");
-values.push(transporter_name);
+    updates.push("transporter_name = ?");
+    values.push(transporter_name);
 
-updates.push("lr_number = ?");
-values.push(lr_number);
+    updates.push("lr_number = ?");
+    values.push(lr_number);
 
-updates.push("transport_vehicle_number = ?");
-values.push(transport_vehicle_number);
+    updates.push("transport_vehicle_number = ?");
+    values.push(transport_vehicle_number);
 
-updates.push("invoice_number = ?");
-values.push(invoice_number);
+    updates.push("invoice_number = ?");
+    values.push(invoice_number);
 
     if (schema.hasInvoiceDate) {
       updates.push("invoice_date = ?");
@@ -887,7 +963,6 @@ values.push(invoice_number);
 
     const priceCol = schema.itemPriceCol || "purchase_price";
 
-    // fetch current purchase items with linked vehicle ids
     const [dbItems] = await conn.query(
       `
       SELECT id, contact_vehicle_id
@@ -932,7 +1007,6 @@ values.push(invoice_number);
           ? Number(row.purchase_price)
           : null;
 
-      // prevent conflict with OTHER purchase items
       const [dupItemRows] = await conn.query(
         `
         SELECT id
@@ -950,7 +1024,6 @@ values.push(invoice_number);
         );
       }
 
-      // if linked to contact_vehicles, prevent conflict there too (excluding same linked vehicle)
       const [dupVehicleRows] = await conn.query(
         `
         SELECT id
@@ -968,7 +1041,6 @@ values.push(invoice_number);
         );
       }
 
-      // update purchase item
       await conn.query(
         `
         UPDATE vehicle_purchase_items
@@ -993,7 +1065,6 @@ values.push(invoice_number);
         ]
       );
 
-      // sync linked vehicle master row
       if (linkedVehicleId) {
         const cvUpdates = [
           "engine_number = ?",
@@ -1010,7 +1081,6 @@ values.push(invoice_number);
           color,
         ];
 
-        // update vehicle_model text if columns exist
         if (schema.contactVehicleCols.has("vehicle_model")) {
           let vehicle_model = null;
 
