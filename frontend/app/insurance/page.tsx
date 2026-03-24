@@ -19,8 +19,22 @@ function getRoleFromToken(): string | null {
   }
 }
 
+function fileUrl(path?: string | null) {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const base =
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "";
+  return `${base}${path}`;
+}
+
+function isImageFile(path?: string | null) {
+  return /\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(String(path || ""));
+}
+
 type Row = {
-  source: "SALE" | "RENEWAL";
+  source: "SALE" | "RENEWAL" | "DIRECT";
   id: number;
   sale_id: number | null;
   policy_no: string;
@@ -53,6 +67,7 @@ type Row = {
   remarks?: string | null;
   insurance_type?: string | null;
   renewal_date?: string | null;
+  uploaded_file?: string | null;
 };
 
 type Summary = {
@@ -151,6 +166,23 @@ function detailValue(v: any) {
   return String(v);
 }
 
+function crmStatusTone(daysLeft: number) {
+  if (daysLeft < 0) {
+    return { bg: "#fee2e2", color: "#991b1b", label: "Expired" };
+  }
+  if (daysLeft <= 3) {
+    return { bg: "#ffedd5", color: "#9a3412", label: "Urgent" };
+  }
+  if (daysLeft <= 10) {
+    return { bg: "#fef3c7", color: "#92400e", label: "Expiring Soon" };
+  }
+  return { bg: "#dcfce7", color: "#166534", label: "Active" };
+}
+
+function followupStepDone(date?: string | null, remark?: string | null) {
+  return !!(date || remark);
+}
+
 export default function InsurancePage() {
   const { permissions, loading } = usePermissions();
 
@@ -171,8 +203,11 @@ export default function InsurancePage() {
 
   const canView = !!permissions.view_insurance;
   const canRenew = !!permissions.renew_policy;
+  const canAddInsurance = !!permissions.add_insurance;
+  const canImportInsurance = !!permissions.import_insurance;
+  const canExportInsurance = !!permissions.export_insurance;
 
-  const [sourceFilter, setSourceFilter] = useState<"all" | "SALE" | "RENEWAL">("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "SALE" | "RENEWAL" | "DIRECT">("all");
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -202,9 +237,13 @@ export default function InsurancePage() {
 
   const [showFollowup, setShowFollowup] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
-  const [f1d, setF1d] = useState(""); const [f1r, setF1r] = useState("");
-  const [f2d, setF2d] = useState(""); const [f2r, setF2r] = useState("");
-  const [f3d, setF3d] = useState(""); const [f3r, setF3r] = useState("");
+  const [f1d, setF1d] = useState("");
+  const [f1r, setF1r] = useState("");
+  const [f2d, setF2d] = useState("");
+  const [f2r, setF2r] = useState("");
+  const [f3d, setF3d] = useState("");
+  const [f3r, setF3r] = useState("");
+  const [savingFollowup, setSavingFollowup] = useState(false);
 
   const [showDetails, setShowDetails] = useState(false);
   const [detailRowState, setDetailRowState] = useState<Row | null>(null);
@@ -222,6 +261,7 @@ export default function InsurancePage() {
           search: search.trim() || undefined,
           from: from || undefined,
           to: to || undefined,
+          status: statusFilter,
         },
       });
 
@@ -261,6 +301,7 @@ export default function InsurancePage() {
         remarks: r.remarks ?? null,
         insurance_type: r.insurance_type ?? null,
         renewal_date: r.renewal_date ?? null,
+        uploaded_file: r.uploaded_file ?? null,
       }));
 
       setRows(normalized);
@@ -281,8 +322,7 @@ export default function InsurancePage() {
   useEffect(() => {
     if (loading) return;
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, page, pageSize, sourceFilter, from, to]);
+  }, [loading, page, pageSize, sourceFilter, from, to, statusFilter, canView]);
 
   useEffect(() => {
     if (loading) return;
@@ -291,18 +331,9 @@ export default function InsurancePage() {
       fetchData();
     }, 300);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  const filteredRows = useMemo(() => {
-    return rows.filter((r) => {
-      const d = Number(r.days_left);
-      if (statusFilter === "expired") return d < 0;
-      if (statusFilter === "expiring") return d >= 0 && d <= 10;
-      if (statusFilter === "active") return d > 10;
-      return true;
-    });
-  }, [rows, statusFilter]);
+  const filteredRows = useMemo(() => rows, [rows]);
 
   const openFollowup = (row: Row) => {
     setSelected(row);
@@ -317,17 +348,27 @@ export default function InsurancePage() {
 
   const saveFollowups = async () => {
     if (!selected) return;
-    await api.put(`/api/insurance-followup/${selected.source}/${selected.id}`, {
-      followup1_date: f1d || null,
-      followup1_remark: f1r || null,
-      followup2_date: f2d || null,
-      followup2_remark: f2r || null,
-      followup3_date: f3d || null,
-      followup3_remark: f3r || null,
-    });
-    setShowFollowup(false);
-    setSelected(null);
-    fetchData();
+
+    try {
+      setSavingFollowup(true);
+
+      await api.put(`/api/insurance-followup/${selected.source}/${selected.id}`, {
+        followup1_date: f1d || null,
+        followup1_remark: f1r || null,
+        followup2_date: f2d || null,
+        followup2_remark: f2r || null,
+        followup3_date: f3d || null,
+        followup3_remark: f3r || null,
+      });
+
+      setShowFollowup(false);
+      setSelected(null);
+      fetchData();
+    } catch (e: any) {
+      alert(e?.response?.data?.message || e?.message || "Failed to save follow-up");
+    } finally {
+      setSavingFollowup(false);
+    }
   };
 
   const openRenew = (row: Row) => {
@@ -378,14 +419,14 @@ export default function InsurancePage() {
         <div style={headerRow}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>Insurance</h2>
-            <Pill bg="#f3f4f6">Combined (Sale + Renewal)</Pill>
+            <Pill bg="#f3f4f6">Combined</Pill>
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <OwnerImportExportButtons
               role={user?.role}
-              canImport={!!permissions.import_insurance}
-              canExport={!!permissions.export_insurance}
+              canImport={canImportInsurance}
+              canExport={canExportInsurance}
               filters={{
                 source: sourceFilter,
                 search,
@@ -398,9 +439,15 @@ export default function InsurancePage() {
                 fetchData();
               }}
             />
-            <button style={btnOutlineCompact} onClick={() => (window.location.href = "/insurance/add")}>
-              + Add Policy
-            </button>
+
+            {canAddInsurance && (
+              <button
+                style={btnOutlineCompact}
+                onClick={() => (window.location.href = "/renewal/create")}
+              >
+                + Add Policy
+              </button>
+            )}
           </div>
         </div>
 
@@ -426,6 +473,7 @@ export default function InsurancePage() {
                 <option value="all">All Sources</option>
                 <option value="SALE">SALE</option>
                 <option value="RENEWAL">RENEWAL</option>
+                <option value="DIRECT">DIRECT</option>
               </select>
             </div>
 
@@ -483,16 +531,16 @@ export default function InsurancePage() {
           </div>
 
           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-            <button style={statusFilter === "all" ? chipActiveCompact : chipCompact} onClick={() => setStatusFilter("all")}>
+            <button style={statusFilter === "all" ? chipActiveCompact : chipCompact} onClick={() => { setPage(1); setStatusFilter("all"); }}>
               All ({summary.all})
             </button>
-            <button style={statusFilter === "active" ? chipActiveCompact : chipCompact} onClick={() => setStatusFilter("active")}>
+            <button style={statusFilter === "active" ? chipActiveCompact : chipCompact} onClick={() => { setPage(1); setStatusFilter("active"); }}>
               Active ({summary.active})
             </button>
-            <button style={statusFilter === "expiring" ? chipActiveCompact : chipCompact} onClick={() => setStatusFilter("expiring")}>
+            <button style={statusFilter === "expiring" ? chipActiveCompact : chipCompact} onClick={() => { setPage(1); setStatusFilter("expiring"); }}>
               Expiring ({summary.expiring})
             </button>
-            <button style={statusFilter === "expired" ? chipActiveCompact : chipCompact} onClick={() => setStatusFilter("expired")}>
+            <button style={statusFilter === "expired" ? chipActiveCompact : chipCompact} onClick={() => { setPage(1); setStatusFilter("expired"); }}>
               Expired ({summary.expired})
             </button>
           </div>
@@ -527,7 +575,15 @@ export default function InsurancePage() {
               return (
                 <tr key={key}>
                   <td style={tdCompact}>
-                    <Pill bg={row.source === "SALE" ? "#dcfce7" : "#dbeafe"}>
+                    <Pill
+                      bg={
+                        row.source === "SALE"
+                          ? "#dcfce7"
+                          : row.source === "RENEWAL"
+                          ? "#dbeafe"
+                          : "#fef3c7"
+                      }
+                    >
                       {row.source}
                     </Pill>
                   </td>
@@ -574,17 +630,24 @@ export default function InsurancePage() {
 
                   <td style={tdCompact}>
                     <div style={actionWrapCompact}>
-                      <button style={btnOutlineSmallCompact} onClick={() => openDetails(row)}>Details</button>
-                      <button style={btnOutlineSmallCompact} onClick={() => openFollowup(row)}>Follow-up</button>
-                      <button
-                        style={btnPrimarySmallCompact}
-                        onClick={() => {
-                          if (!canRenew) return alert("Permission denied");
-                          openRenew(row);
-                        }}
-                      >
-                        Renew
+                      <button style={btnOutlineSmallCompact} onClick={() => openDetails(row)}>
+                        Details
                       </button>
+
+                      {canRenew && (
+                        <button style={btnOutlineSmallCompact} onClick={() => openFollowup(row)}>
+                          Follow-up
+                        </button>
+                      )}
+
+                      {canRenew && (
+                        <button
+                          style={btnPrimarySmallCompact}
+                          onClick={() => openRenew(row)}
+                        >
+                          Renew
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -650,10 +713,35 @@ export default function InsurancePage() {
               <div style={detailCard}><div style={detailLabel}>Premium</div><div style={detailText}>{niceMoney(detailRowState.premium_amount ?? detailRowState.premium)}</div></div>
 
               <div style={detailCard}><div style={detailLabel}>Invoice Number</div><div style={detailText}>{detailValue(detailRowState.invoice_number)}</div></div>
+              <div style={detailCard}><div style={detailLabel}>Uploaded File</div><div style={detailText}>
+                {detailRowState.uploaded_file ? (
+                  <a
+                    href={fileUrl(detailRowState.uploaded_file)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "#2563eb", textDecoration: "underline" }}
+                  >
+                    View File
+                  </a>
+                ) : "-"}
+              </div></div>
               <div style={detailCard}><div style={detailLabel}>Follow-up 1 Date</div><div style={detailText}>{niceDate(detailRowState.followup1_date)}</div></div>
               <div style={detailCard}><div style={detailLabel}>Follow-up 2 Date</div><div style={detailText}>{niceDate(detailRowState.followup2_date)}</div></div>
               <div style={detailCard}><div style={detailLabel}>Follow-up 3 Date</div><div style={detailText}>{niceDate(detailRowState.followup3_date)}</div></div>
             </div>
+
+            {detailRowState.uploaded_file && isImageFile(detailRowState.uploaded_file) && (
+              <div style={{ marginTop: 14 }}>
+                <div style={detailLabel}>Image Preview</div>
+                <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fafafa" }}>
+                  <img
+                    src={fileUrl(detailRowState.uploaded_file)}
+                    alt="Uploaded insurance file"
+                    style={{ maxWidth: "100%", maxHeight: 360, borderRadius: 10 }}
+                  />
+                </div>
+              </div>
+            )}
 
             <div style={{ marginTop: 12 }}>
               <div style={detailLabel}>Remarks</div>
@@ -728,42 +816,175 @@ export default function InsurancePage() {
       )}
 
       {showFollowup && selected && (
-        <div style={overlay}>
-          <div style={modal}>
-            <div style={modalHeader}>
-              <h3 style={{ margin: 0, fontSize: 18 }}>Follow-up ({selected.customer_name})</h3>
+        <div style={drawerOverlay}>
+          <div style={crmDrawer}>
+            <div style={crmDrawerHeader}>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>Follow-up CRM</div>
+                <div style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>
+                  Manage customer communication and renewal tracking
+                </div>
+              </div>
+
               <button style={closeBtn} onClick={() => setShowFollowup(false)}>X</button>
             </div>
 
-            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
-              <div style={followupRow}>
-                <div style={labelBox}>Follow-up 1</div>
-                <div style={followupInputs}>
-                  <input style={inputCompact} type="date" value={f1d} onChange={(e) => setF1d(e.target.value)} />
-                  <input style={{ ...inputCompact, flex: 1 }} value={f1r} onChange={(e) => setF1r(e.target.value)} placeholder="Remark" />
+            <div style={crmTopCard}>
+              <div style={crmTopRow}>
+                <div>
+                  <div style={crmCustomerName}>{selected.customer_name || "-"}</div>
+                  <div style={crmSubLine}>
+                    {selected.phone || "-"} • {selected.vehicle_no || "-"} • {selected.company || "-"}
+                  </div>
+                </div>
+
+                <span
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 999,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    background: crmStatusTone(selected.days_left).bg,
+                    color: crmStatusTone(selected.days_left).color,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {crmStatusTone(selected.days_left).label} • {selected.days_left < 0 ? "Expired" : `${selected.days_left} day(s) left`}
+                </span>
+              </div>
+
+              <div style={crmMiniGrid}>
+                <div style={crmMiniItem}>
+                  <div style={crmMiniLabel}>Policy No</div>
+                  <div style={crmMiniValue}>{selected.policy_no || "-"}</div>
+                </div>
+                <div style={crmMiniItem}>
+                  <div style={crmMiniLabel}>Start Date</div>
+                  <div style={crmMiniValue}>{niceDate(selected.start_date)}</div>
+                </div>
+                <div style={crmMiniItem}>
+                  <div style={crmMiniLabel}>Expiry Date</div>
+                  <div style={crmMiniValue}>{niceDate(selected.expiry_date)}</div>
+                </div>
+                <div style={crmMiniItem}>
+                  <div style={crmMiniLabel}>Source</div>
+                  <div style={crmMiniValue}>{selected.source}</div>
                 </div>
               </div>
 
-              <div style={followupRow}>
-                <div style={labelBox}>Follow-up 2</div>
-                <div style={followupInputs}>
-                  <input style={inputCompact} type="date" value={f2d} onChange={(e) => setF2d(e.target.value)} />
-                  <input style={{ ...inputCompact, flex: 1 }} value={f2r} onChange={(e) => setF2r(e.target.value)} placeholder="Remark" />
+              <div style={crmQuickActions}>
+                <a href={`tel:${selected.phone || ""}`} style={crmQuickBtn}>Call</a>
+                <a
+                  href={`https://wa.me/91${selected.phone || ""}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={crmQuickBtn}
+                >
+                  WhatsApp
+                </a>
+                <button
+                  type="button"
+                  style={crmQuickBtn}
+                  onClick={() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + 3);
+                    setF1d(d.toISOString().slice(0, 10));
+                  }}
+                >
+                  Next in 3 Days
+                </button>
+                <button
+                  type="button"
+                  style={crmQuickBtn}
+                  onClick={() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + 7);
+                    setF1d(d.toISOString().slice(0, 10));
+                  }}
+                >
+                  Next in 7 Days
+                </button>
+              </div>
+            </div>
+
+            <div style={crmSectionTitle}>Follow-up Timeline</div>
+
+            <div style={crmTimelineWrap}>
+              <div style={crmTimelineItem}>
+                <div style={crmTimelineDot(followupStepDone(f1d, f1r))} />
+                <div style={crmTimelineCard}>
+                  <div style={crmTimelineHeader}>
+                    <div style={crmTimelineTitle}>Follow-up 1</div>
+                    <div style={crmTimelineStatus(followupStepDone(f1d, f1r))}>
+                      {followupStepDone(f1d, f1r) ? "Updated" : "Pending"}
+                    </div>
+                  </div>
+                  <div style={crmTimelineInputs}>
+                    <input style={inputCompact} type="date" value={f1d} onChange={(e) => setF1d(e.target.value)} />
+                    <textarea
+                      style={crmTextarea}
+                      value={f1r}
+                      onChange={(e) => setF1r(e.target.value)}
+                      placeholder="Write follow-up 1 remarks..."
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div style={followupRow}>
-                <div style={labelBox}>Follow-up 3</div>
-                <div style={followupInputs}>
-                  <input style={inputCompact} type="date" value={f3d} onChange={(e) => setF3d(e.target.value)} />
-                  <input style={{ ...inputCompact, flex: 1 }} value={f3r} onChange={(e) => setF3r(e.target.value)} placeholder="Remark" />
+              <div style={crmTimelineLine} />
+
+              <div style={crmTimelineItem}>
+                <div style={crmTimelineDot(followupStepDone(f2d, f2r))} />
+                <div style={crmTimelineCard}>
+                  <div style={crmTimelineHeader}>
+                    <div style={crmTimelineTitle}>Follow-up 2</div>
+                    <div style={crmTimelineStatus(followupStepDone(f2d, f2r))}>
+                      {followupStepDone(f2d, f2r) ? "Updated" : "Pending"}
+                    </div>
+                  </div>
+                  <div style={crmTimelineInputs}>
+                    <input style={inputCompact} type="date" value={f2d} onChange={(e) => setF2d(e.target.value)} />
+                    <textarea
+                      style={crmTextarea}
+                      value={f2r}
+                      onChange={(e) => setF2r(e.target.value)}
+                      placeholder="Write follow-up 2 remarks..."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div style={crmTimelineLine} />
+
+              <div style={crmTimelineItem}>
+                <div style={crmTimelineDot(followupStepDone(f3d, f3r))} />
+                <div style={crmTimelineCard}>
+                  <div style={crmTimelineHeader}>
+                    <div style={crmTimelineTitle}>Follow-up 3</div>
+                    <div style={crmTimelineStatus(followupStepDone(f3d, f3r))}>
+                      {followupStepDone(f3d, f3r) ? "Updated" : "Pending"}
+                    </div>
+                  </div>
+                  <div style={crmTimelineInputs}>
+                    <input style={inputCompact} type="date" value={f3d} onChange={(e) => setF3d(e.target.value)} />
+                    <textarea
+                      style={crmTextarea}
+                      value={f3r}
+                      onChange={(e) => setF3r(e.target.value)}
+                      placeholder="Write follow-up 3 remarks..."
+                    />
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div style={modalActions}>
-              <button style={btnOutlineSmallCompact} onClick={() => setShowFollowup(false)}>Cancel</button>
-              <button style={btnPrimarySmallCompact} onClick={saveFollowups}>Save</button>
+            <div style={crmBottomBar}>
+              <button style={btnOutlineSmallCompact} onClick={() => setShowFollowup(false)}>
+                Cancel
+              </button>
+              <button style={btnPrimarySmallCompact} onClick={saveFollowups} disabled={savingFollowup}>
+                {savingFollowup ? "Saving..." : "Save Follow-up"}
+              </button>
             </div>
           </div>
         </div>
@@ -772,338 +993,255 @@ export default function InsurancePage() {
   );
 }
 
-/* compact styles */
-const pageWrap: any = {
-  padding: 10,
-  maxWidth: 1600,
-  margin: "0 auto",
+const pageWrap: any = { padding: 10, maxWidth: 1600, margin: "0 auto" };
+const cardCompact: any = { background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 10, boxShadow: "0 1px 4px rgba(0,0,0,0.04)" };
+const headerRow: any = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" };
+const compactStatsWrap: any = { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 10 };
+const compactStat: any = { border: "1px solid #e5e7eb", borderRadius: 10, padding: "7px 10px", background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 };
+const compactStatLabel: any = { fontSize: 11, color: "#6b7280", fontWeight: 700, textTransform: "uppercase" };
+const filtersBoxCompact: any = { marginTop: 10, border: "1px solid #eef2f7", borderRadius: 12, padding: 10, background: "#fcfcfd" };
+const filterGridCompact: any = { display: "grid", gridTemplateColumns: "1.1fr 1fr 1fr 0.8fr", gap: 8 };
+const inputCompact: any = { height: 34, width: "100%", padding: "0 10px", borderRadius: 8, border: "1px solid #d1d5db", outline: "none", fontSize: 13, background: "#fff" };
+const labelCompact: any = { fontSize: 11, color: "#6b7280", fontWeight: 700, marginBottom: 4 };
+const errorBox: any = { marginTop: 10, padding: 10, borderRadius: 10, background: "#fee2e2", color: "#991b1b", fontWeight: 600, fontSize: 13 };
+const tableCompact: any = { width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 980 };
+const thCompact: any = { textAlign: "left", padding: "9px 8px", fontSize: 11, color: "#374151", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, whiteSpace: "nowrap" };
+const tdCompact: any = { padding: "9px 8px", borderBottom: "1px solid #f1f5f9", verticalAlign: "top", fontSize: 13 };
+const strongTextCompact: any = { fontWeight: 800, color: "#111827", fontSize: 13 };
+const subTextCompact: any = { marginTop: 3, fontSize: 11, color: "#6b7280" };
+const subTextCompactMono: any = { marginTop: 3, fontSize: 11, color: "#6b7280", fontFamily: "monospace", fontWeight: 700 };
+const miniStackCompact: any = { fontSize: 12, lineHeight: "16px", minWidth: 150 };
+const actionWrapCompact: any = { display: "flex", gap: 6, flexWrap: "wrap", minWidth: 180 };
+const paginationBarCompact: any = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", padding: 10, borderTop: "1px solid #eee" };
+const btnOutlineCompact: any = { height: 34, padding: "0 12px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" };
+const btnOutlineSmallCompact: any = { height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" };
+const btnPrimarySmallCompact: any = { height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid #dc2626", background: "#dc2626", color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer" };
+const chipCompact: any = { height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid #d1d5db", background: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" };
+const chipActiveCompact: any = { ...chipCompact, background: "#111827", color: "#fff", border: "1px solid #111827" };
+const overlay: any = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.38)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, zIndex: 50 };
+const modal: any = { width: "min(760px, 96vw)", maxHeight: "92vh", overflowY: "auto", background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", padding: 16, boxShadow: "0 10px 30px rgba(0,0,0,0.18)" };
+const detailModal: any = { width: "min(1100px, 96vw)", maxHeight: "92vh", overflowY: "auto", background: "#fff", borderRadius: 16, border: "1px solid #e5e7eb", padding: 16, boxShadow: "0 10px 30px rgba(0,0,0,0.18)" };
+const modalHeader: any = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 };
+const closeBtn: any = { width: 36, height: 36, borderRadius: 10, border: "1px solid #d1d5db", background: "#fff", fontWeight: 900, cursor: "pointer" };
+const renewGrid: any = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 12 };
+const modalActions: any = { display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16, flexWrap: "wrap" };
+const detailsGrid: any = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 };
+const detailCard: any = { border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fafafa" };
+const detailLabel: any = { fontSize: 12, color: "#6b7280", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 };
+const detailText: any = { fontSize: 14, color: "#111827", fontWeight: 600, wordBreak: "break-word" };
+const remarksBox: any = { minHeight: 80, border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fafafa", color: "#111827", fontSize: 14, fontWeight: 500, whiteSpace: "pre-wrap" };
+
+const drawerOverlay: any = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15,23,42,0.45)",
+  display: "flex",
+  justifyContent: "flex-end",
+  zIndex: 60,
 };
 
-const cardCompact: any = {
+const crmDrawer: any = {
+  width: "min(640px, 100vw)",
+  height: "100vh",
+  background: "#f8fafc",
+  borderLeft: "1px solid #e5e7eb",
+  boxShadow: "-10px 0 30px rgba(0,0,0,0.12)",
+  padding: 16,
+  overflowY: "auto",
+};
+
+const crmDrawerHeader: any = {
+  position: "sticky",
+  top: 0,
+  zIndex: 2,
+  display: "flex",
+  alignItems: "flex-start",
+  justifyContent: "space-between",
+  gap: 12,
+  marginBottom: 12,
+  paddingBottom: 10,
+  background: "#f8fafc",
+};
+
+const crmTopCard: any = {
   background: "#fff",
   border: "1px solid #e5e7eb",
-  borderRadius: 14,
-  padding: 10,
+  borderRadius: 16,
+  padding: 14,
   boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+  position: "sticky",
+  top: 66,
+  zIndex: 1,
 };
 
-const headerRow: any = {
+const crmTopRow: any = {
   display: "flex",
-  gap: 10,
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: 12,
   flexWrap: "wrap",
-  alignItems: "center",
-  justifyContent: "space-between",
 };
 
-const compactStatsWrap: any = {
+const crmCustomerName: any = {
+  fontSize: 20,
+  fontWeight: 800,
+  color: "#111827",
+};
+
+const crmSubLine: any = {
+  marginTop: 4,
+  fontSize: 13,
+  color: "#6b7280",
+};
+
+const crmMiniGrid: any = {
   display: "grid",
-  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-  gap: 8,
-  marginTop: 10,
-};
-
-const compactStat: any = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 10,
-  padding: "7px 10px",
-  background: "#fafafa",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
   gap: 10,
+  marginTop: 14,
 };
 
-const compactStatLabel: any = {
+const crmMiniItem: any = {
+  background: "#f8fafc",
+  border: "1px solid #e5e7eb",
+  borderRadius: 12,
+  padding: 10,
+};
+
+const crmMiniLabel: any = {
   fontSize: 11,
   color: "#6b7280",
   fontWeight: 700,
   textTransform: "uppercase",
-};
-
-const filtersBoxCompact: any = {
-  marginTop: 10,
-  border: "1px solid #eef2f7",
-  borderRadius: 12,
-  padding: 10,
-  background: "#fcfcfd",
-};
-
-const filterGridCompact: any = {
-  display: "grid",
-  gridTemplateColumns: "1.1fr 1fr 1fr 0.8fr",
-  gap: 8,
-};
-
-const inputCompact: any = {
-  height: 34,
-  width: "100%",
-  padding: "0 10px",
-  borderRadius: 8,
-  border: "1px solid #d1d5db",
-  outline: "none",
-  fontSize: 13,
-  background: "#fff",
-};
-
-const labelCompact: any = {
-  fontSize: 11,
-  color: "#6b7280",
-  fontWeight: 700,
   marginBottom: 4,
 };
 
-const errorBox: any = {
-  marginTop: 10,
-  padding: 10,
-  borderRadius: 10,
-  background: "#fee2e2",
-  color: "#991b1b",
-  fontWeight: 600,
-  fontSize: 13,
-};
-
-const tableCompact: any = {
-  width: "100%",
-  borderCollapse: "separate",
-  borderSpacing: 0,
-  minWidth: 980,
-};
-
-const thCompact: any = {
-  textAlign: "left",
-  padding: "9px 8px",
-  fontSize: 11,
-  color: "#374151",
-  borderBottom: "1px solid #e5e7eb",
-  position: "sticky",
-  top: 0,
-  whiteSpace: "nowrap",
-};
-
-const tdCompact: any = {
-  padding: "9px 8px",
-  borderBottom: "1px solid #f1f5f9",
-  verticalAlign: "top",
-  fontSize: 13,
-};
-
-const strongTextCompact: any = {
-  fontWeight: 800,
+const crmMiniValue: any = {
+  fontSize: 14,
   color: "#111827",
-  fontSize: 13,
-};
-
-const subTextCompact: any = {
-  marginTop: 3,
-  fontSize: 11,
-  color: "#6b7280",
-};
-
-const subTextCompactMono: any = {
-  marginTop: 3,
-  fontSize: 11,
-  color: "#6b7280",
-  fontFamily: "monospace",
   fontWeight: 700,
 };
 
-const miniStackCompact: any = {
-  fontSize: 12,
-  lineHeight: "16px",
-  minWidth: 150,
-};
-
-const actionWrapCompact: any = {
+const crmQuickActions: any = {
   display: "flex",
-  gap: 6,
+  gap: 8,
   flexWrap: "wrap",
-  minWidth: 180,
+  marginTop: 14,
 };
 
-const paginationBarCompact: any = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 10,
-  flexWrap: "wrap",
-  padding: 10,
-  borderTop: "1px solid #eee",
-};
-
-const btnOutlineCompact: any = {
+const crmQuickBtn: any = {
   height: 34,
   padding: "0 12px",
-  borderRadius: 8,
+  borderRadius: 10,
   border: "1px solid #d1d5db",
   background: "#fff",
+  color: "#111827",
   fontWeight: 700,
   fontSize: 13,
   cursor: "pointer",
-};
-
-const btnOutlineSmallCompact: any = {
-  height: 30,
-  padding: "0 10px",
-  borderRadius: 8,
-  border: "1px solid #d1d5db",
-  background: "#fff",
-  fontWeight: 700,
-  fontSize: 12,
-  cursor: "pointer",
-};
-
-const btnPrimarySmallCompact: any = {
-  height: 30,
-  padding: "0 10px",
-  borderRadius: 8,
-  border: "1px solid #dc2626",
-  background: "#dc2626",
-  color: "#fff",
-  fontWeight: 800,
-  fontSize: 12,
-  cursor: "pointer",
-};
-
-const chipCompact: any = {
-  height: 30,
-  padding: "0 10px",
-  borderRadius: 8,
-  border: "1px solid #d1d5db",
-  background: "#fff",
-  fontWeight: 700,
-  fontSize: 12,
-  cursor: "pointer",
-};
-
-const chipActiveCompact: any = {
-  ...chipCompact,
-  background: "#111827",
-  color: "#fff",
-  border: "1px solid #111827",
-};
-
-const overlay: any = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(0,0,0,0.38)",
-  display: "flex",
+  textDecoration: "none",
+  display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  padding: 12,
-  zIndex: 50,
 };
 
-const modal: any = {
-  width: "min(760px, 96vw)",
-  maxHeight: "92vh",
-  overflowY: "auto",
+const crmSectionTitle: any = {
+  marginTop: 18,
+  marginBottom: 12,
+  fontSize: 16,
+  fontWeight: 800,
+  color: "#111827",
+};
+
+const crmTimelineWrap: any = {
+  position: "relative",
+  paddingLeft: 14,
+};
+
+const crmTimelineLine: any = {
+  width: 2,
+  height: 18,
+  background: "#d1d5db",
+  marginLeft: 10,
+};
+
+const crmTimelineItem: any = {
+  display: "flex",
+  gap: 12,
+  alignItems: "flex-start",
+};
+
+const crmTimelineDot = (done: boolean) => ({
+  width: 22,
+  height: 22,
+  minWidth: 22,
+  borderRadius: 999,
+  marginTop: 16,
+  background: done ? "#16a34a" : "#cbd5e1",
+  border: "3px solid #fff",
+  boxShadow: "0 0 0 1px #d1d5db",
+});
+
+const crmTimelineCard: any = {
+  flex: 1,
   background: "#fff",
-  borderRadius: 16,
   border: "1px solid #e5e7eb",
-  padding: 16,
-  boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+  borderRadius: 16,
+  padding: 14,
+  boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
 };
 
-const detailModal: any = {
-  width: "min(1100px, 96vw)",
-  maxHeight: "92vh",
-  overflowY: "auto",
-  background: "#fff",
-  borderRadius: 16,
-  border: "1px solid #e5e7eb",
-  padding: 16,
-  boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
-};
-
-const modalHeader: any = {
+const crmTimelineHeader: any = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
   gap: 10,
+  flexWrap: "wrap",
+  marginBottom: 10,
 };
 
-const closeBtn: any = {
-  width: 36,
-  height: 36,
-  borderRadius: 10,
-  border: "1px solid #d1d5db",
-  background: "#fff",
-  fontWeight: 900,
-  cursor: "pointer",
+const crmTimelineTitle: any = {
+  fontSize: 15,
+  fontWeight: 800,
+  color: "#111827",
 };
 
-const renewGrid: any = {
+const crmTimelineStatus = (done: boolean) => ({
+  fontSize: 12,
+  fontWeight: 800,
+  borderRadius: 999,
+  padding: "6px 10px",
+  background: done ? "#dcfce7" : "#f3f4f6",
+  color: done ? "#166534" : "#6b7280",
+});
+
+const crmTimelineInputs: any = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  gap: 12,
-  marginTop: 12,
+  gridTemplateColumns: "160px 1fr",
+  gap: 10,
 };
 
-const modalActions: any = {
+const crmTextarea: any = {
+  width: "100%",
+  minHeight: 84,
+  border: "1px solid #d1d5db",
+  borderRadius: 10,
+  padding: 10,
+  fontSize: 13,
+  background: "#fff",
+  resize: "vertical",
+  outline: "none",
+};
+
+const crmBottomBar: any = {
+  position: "sticky",
+  bottom: 0,
   display: "flex",
   justifyContent: "flex-end",
   gap: 10,
   marginTop: 16,
-  flexWrap: "wrap",
-};
-
-const followupRow: any = {
-  display: "grid",
-  gridTemplateColumns: "140px 1fr",
-  gap: 10,
-  alignItems: "center",
-};
-
-const labelBox: any = {
-  fontSize: 12,
-  color: "#6b7280",
-  fontWeight: 700,
-};
-
-const followupInputs: any = {
-  display: "flex",
-  gap: 8,
-  flexWrap: "wrap",
-};
-
-const detailsGrid: any = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  gap: 12,
-  marginTop: 14,
-};
-
-const detailCard: any = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 12,
-  padding: 12,
-  background: "#fafafa",
-};
-
-const detailLabel: any = {
-  fontSize: 12,
-  color: "#6b7280",
-  fontWeight: 700,
-  marginBottom: 6,
-  textTransform: "uppercase",
-  letterSpacing: 0.3,
-};
-
-const detailText: any = {
-  fontSize: 14,
-  color: "#111827",
-  fontWeight: 600,
-  wordBreak: "break-word",
-};
-
-const remarksBox: any = {
-  minHeight: 80,
-  border: "1px solid #e5e7eb",
-  borderRadius: 12,
-  padding: 12,
-  background: "#fafafa",
-  color: "#111827",
-  fontSize: 14,
-  fontWeight: 500,
-  whiteSpace: "pre-wrap",
+  paddingTop: 14,
+  paddingBottom: 6,
+  background: "#f8fafc",
+  boxShadow: "0 -8px 18px rgba(248,250,252,0.95)",
 };

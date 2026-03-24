@@ -1,4 +1,3 @@
-// backend/controllers/contactsController.js
 const db = require("../db");
 const multer = require("multer");
 
@@ -76,7 +75,6 @@ async function fetchContactById(id) {
 // 1) Insert phones with is_primary=0
 // 2) Then do UPDATEs to enforce exactly one primary
 async function enforceSinglePrimary(conn, contactId, makePrimaryPhoneId) {
-  // Clear all primaries among active phones
   await conn.query(
     `UPDATE contact_phones
      SET is_primary = 0
@@ -84,7 +82,6 @@ async function enforceSinglePrimary(conn, contactId, makePrimaryPhoneId) {
     [contactId]
   );
 
-  // Set chosen as primary
   await conn.query(
     `UPDATE contact_phones
      SET is_primary = 1, is_active = 1
@@ -117,12 +114,10 @@ async function ensureSomePrimary(conn, contactId) {
 }
 
 // ---------- list/search ----------
-// ---------- list/search (with pagination) ----------
 exports.listSearch = async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
 
-    // pagination
     let page = parseInt(String(req.query.page || "1"), 10);
     let pageSize = parseInt(String(req.query.pageSize || "20"), 10);
 
@@ -132,7 +127,6 @@ exports.listSearch = async (req, res) => {
 
     const offset = (page - 1) * pageSize;
 
-    // WHERE clause (keep same search behavior)
     let whereSql = `WHERE 1=1`;
     const whereParams = [];
 
@@ -155,12 +149,15 @@ exports.listSearch = async (req, res) => {
             SELECT 1 FROM contact_vehicles v
             WHERE v.contact_id=c.id AND v.engine_number LIKE ?
           )
+          OR EXISTS (
+            SELECT 1 FROM contact_vehicles v
+            WHERE v.contact_id=c.id AND v.rto_number LIKE ?
+          )
         )
       `;
-      whereParams.push(like, like, like, like, like, like);
+      whereParams.push(like, like, like, like, like, like, like);
     }
 
-    // 1) total count
     const [countRows] = await db.query(
       `
       SELECT COUNT(*) AS total
@@ -171,7 +168,6 @@ exports.listSearch = async (req, res) => {
     );
     const total = Number(countRows?.[0]?.total || 0);
 
-    // 2) paginated rows
     const [rows] = await db.query(
       `
       SELECT
@@ -204,7 +200,6 @@ exports.listSearch = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
-
 
 // ---------- create ----------
 exports.createContact = async (req, res) => {
@@ -243,7 +238,6 @@ exports.createContact = async (req, res) => {
       });
     }
 
-    // ensure one "desired primary"
     if (!cleanedPhones.some((p) => p.is_primary === 1)) cleanedPhones[0].is_primary = 1;
 
     await conn.beginTransaction();
@@ -256,7 +250,6 @@ exports.createContact = async (req, res) => {
 
     const contactId = ins.insertId;
 
-    // Insert phones SAFELY with is_primary=0 (avoid trigger 1442)
     const inserted = [];
     for (const p of cleanedPhones) {
       const [r] = await conn.query(
@@ -267,23 +260,22 @@ exports.createContact = async (req, res) => {
       inserted.push({ id: r.insertId, wantPrimary: p.is_primary === 1 });
     }
 
-    // Enforce exactly one primary by UPDATEs
     const primaryId = inserted.find((x) => x.wantPrimary)?.id || inserted[0]?.id;
     if (primaryId) {
       await enforceSinglePrimary(conn, contactId, primaryId);
     }
 
-    // vehicles
     const vList = Array.isArray(vehicles) ? vehicles : [];
     for (const v of vList) {
       const chassis = String(v?.chassis_number || "").trim();
       const engine = String(v?.engine_number || "").trim();
+      const rtoNumber = String(v?.rto_number || "").trim();
       if (!chassis || !engine) continue;
 
       await conn.query(
-        `INSERT INTO contact_vehicles (contact_id, chassis_number, engine_number, model_id, variant_id)
-         VALUES (?,?,?,?,?)`,
-        [contactId, chassis, engine, v.model_id || null, v.variant_id || null]
+        `INSERT INTO contact_vehicles (contact_id, chassis_number, engine_number, rto_number, model_id, variant_id)
+         VALUES (?,?,?,?,?,?)`,
+        [contactId, chassis, engine, safeText(rtoNumber), v.model_id || null, v.variant_id || null]
       );
     }
 
@@ -371,7 +363,6 @@ exports.addPhone = async (req, res) => {
 
     await conn.beginTransaction();
 
-    // insert with is_primary=0 always (avoid trigger 1442)
     const [ins] = await conn.query(
       `INSERT INTO contact_phones (contact_id, phone, is_primary, is_active)
        VALUES (?,?,0,1)`,
@@ -380,7 +371,6 @@ exports.addPhone = async (req, res) => {
 
     const newPhoneId = ins.insertId;
 
-    // make it primary if requested OR if no primary exists
     if (makePrimary) {
       await enforceSinglePrimary(conn, contactId, newPhoneId);
     } else {
@@ -446,7 +436,6 @@ exports.deactivatePhone = async (req, res) => {
       [phoneId, contactId]
     );
 
-    // ensure we still have a primary among remaining active phones
     await ensureSomePrimary(conn, contactId);
 
     await conn.commit();
@@ -468,17 +457,18 @@ exports.addVehicle = async (req, res) => {
     const contactId = Number(req.params.id);
     if (!contactId) return res.status(400).json({ success: false, message: "Invalid contact id" });
 
-    const { chassis_number, engine_number, model_id, variant_id } = req.body || {};
+    const { chassis_number, engine_number, rto_number, model_id, variant_id } = req.body || {};
     const chassis = String(chassis_number || "").trim();
     const engine = String(engine_number || "").trim();
+    const rtoNumber = String(rto_number || "").trim();
 
     if (!chassis) return res.status(400).json({ success: false, message: "Chassis number is required" });
     if (!engine) return res.status(400).json({ success: false, message: "Engine number is required" });
 
     await db.query(
-      `INSERT INTO contact_vehicles (contact_id, chassis_number, engine_number, model_id, variant_id)
-       VALUES (?,?,?,?,?)`,
-      [contactId, chassis, engine, model_id || null, variant_id || null]
+      `INSERT INTO contact_vehicles (contact_id, chassis_number, engine_number, rto_number, model_id, variant_id)
+       VALUES (?,?,?,?,?,?)`,
+      [contactId, chassis, engine, safeText(rtoNumber), model_id || null, variant_id || null]
     );
 
     const data = await fetchContactById(contactId);
@@ -495,10 +485,9 @@ exports.addVehicle = async (req, res) => {
   }
 };
 
-// ---------- Excel helpers (LAZY LOAD) ----------
+// ---------- Excel helpers ----------
 function loadExcelJSOrThrow() {
   try {
-    // lazy require so backend DOES NOT crash on start
     return require("exceljs");
   } catch (e) {
     const msg =
@@ -506,7 +495,6 @@ function loadExcelJSOrThrow() {
       "Fix it like this:\n" +
       "  cd backend\n" +
       "  npm i lodash.union\n" +
-      "  (optional) rm -rf node_modules package-lock.json && npm i\n" +
       "Then restart backend.\n\n" +
       "Original error: " + (e?.message || "unknown");
     const err = new Error(msg);
@@ -536,6 +524,7 @@ exports.downloadImportTemplate = async (req, res) => {
       { header: "variant_name", key: "variant_name", width: 20 },
       { header: "chassis_number", key: "chassis_number", width: 18 },
       { header: "engine_number", key: "engine_number", width: 18 },
+      { header: "rto_number", key: "rto_number", width: 18 },
     ];
 
     ws.addRow({
@@ -551,6 +540,7 @@ exports.downloadImportTemplate = async (req, res) => {
       variant_name: "i3S",
       chassis_number: "CH123456789",
       engine_number: "EN987654321",
+      rto_number: "MP54AB1234",
     });
 
     res.setHeader(
@@ -634,6 +624,7 @@ exports.importContactsExcel = [
         const variant_name = get(row, "variant_name");
         const chassis_number = get(row, "chassis_number");
         const engine_number = get(row, "engine_number");
+        const rto_number = get(row, "rto_number");
 
         const [existingPhone] = await db.query(
           `SELECT contact_id FROM contact_phones WHERE phone=? AND is_active=1 LIMIT 1`,
@@ -660,7 +651,6 @@ exports.importContactsExcel = [
           contactId = ins.insertId;
           created++;
 
-          // Insert primary phone safely then enforce as primary
           const [pIns] = await conn.query(
             `INSERT INTO contact_phones (contact_id, phone, is_primary, is_active) VALUES (?,?,0,1)`,
             [contactId, primary_mobile]
@@ -681,9 +671,7 @@ exports.importContactsExcel = [
                 `INSERT INTO contact_phones (contact_id, phone, is_primary, is_active) VALUES (?,?,0,1)`,
                 [contactId, p]
               );
-            } catch {
-              // ignore duplicates
-            }
+            } catch {}
           }
         }
 
@@ -699,9 +687,9 @@ exports.importContactsExcel = [
 
           try {
             await conn.query(
-              `INSERT INTO contact_vehicles (contact_id, chassis_number, engine_number, model_id, variant_id)
-               VALUES (?,?,?,?,?)`,
-              [contactId, chassis_number, engine_number, model_id, variant_id]
+              `INSERT INTO contact_vehicles (contact_id, chassis_number, engine_number, rto_number, model_id, variant_id)
+               VALUES (?,?,?,?,?,?)`,
+              [contactId, chassis_number, engine_number, safeText(rto_number), model_id, variant_id]
             );
             vehiclesAdded++;
           } catch (e) {
@@ -711,7 +699,6 @@ exports.importContactsExcel = [
           }
         }
 
-        // Ensure there is a primary among active phones
         await ensureSomePrimary(conn, contactId);
 
         await conn.commit();
@@ -742,7 +729,6 @@ exports.deactivateVehicle = async (req, res) => {
     if (!contactId) return res.status(400).json({ success: false, message: "Invalid contact id" });
     if (!vehicleId) return res.status(400).json({ success: false, message: "Invalid vehicle id" });
 
-    // Try soft-delete first (if columns exist)
     try {
       const [r] = await db.query(
         `UPDATE contact_vehicles
@@ -755,7 +741,6 @@ exports.deactivateVehicle = async (req, res) => {
         return res.status(404).json({ success: false, message: "Vehicle not found" });
       }
     } catch (e) {
-      // If table doesn't have is_active/deactivated_at, fallback hard delete
       if (String(e?.code) === "ER_BAD_FIELD_ERROR") {
         const [r2] = await db.query(
           `DELETE FROM contact_vehicles WHERE id = ? AND contact_id = ?`,
@@ -778,12 +763,6 @@ exports.deactivateVehicle = async (req, res) => {
 };
 
 // ---------- lightweight search for Sale creation ----------
-// GET /api/contacts/search?q=
-// Searches across:
-//  - contact name
-//  - active phones
-//  - chassis/engine (contact_vehicles)
-// Returns flattened rows so frontend can let user select the *exact vehicle*.
 exports.searchForSale = async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -791,8 +770,6 @@ exports.searchForSale = async (req, res) => {
 
     const like = `%${q}%`;
 
-    // We return one row per vehicle (if vehicle exists).
-    // If a contact has no vehicles, it can still appear (vehicle fields null).
     const [rows] = await db.query(
       `
       SELECT
@@ -815,6 +792,7 @@ exports.searchForSale = async (req, res) => {
         cv.id AS vehicle_id,
         cv.chassis_number,
         cv.engine_number,
+        cv.rto_number,
         cv.model_id,
         cv.variant_id,
         vm.model_name,
@@ -836,12 +814,13 @@ exports.searchForSale = async (req, res) => {
         )
         OR (cv.chassis_number IS NOT NULL AND cv.chassis_number LIKE ?)
         OR (cv.engine_number IS NOT NULL AND cv.engine_number LIKE ?)
+        OR (cv.rto_number IS NOT NULL AND cv.rto_number LIKE ?)
       )
 
       ORDER BY c.updated_at DESC, c.id DESC, cv.id DESC
       LIMIT 200
       `,
-      [like, like, like, like, like, like]
+      [like, like, like, like, like, like, like]
     );
 
     return res.json({ success: true, data: rows });
@@ -858,10 +837,11 @@ exports.addVehicleToContact = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid contact id" });
     }
 
-    const { chassis_number, engine_number, model_id, variant_id } = req.body || {};
+    const { chassis_number, engine_number, rto_number, model_id, variant_id } = req.body || {};
 
     const chassis = String(chassis_number || "").trim();
     const engine = String(engine_number || "").trim();
+    const rtoNumber = String(rto_number || "").trim();
     const modelId = Number(model_id) || null;
     const variantId = Number(variant_id) || null;
 
@@ -872,23 +852,21 @@ exports.addVehicleToContact = async (req, res) => {
       });
     }
 
-    // Verify contact exists
     const [c] = await db.query(`SELECT id FROM contacts WHERE id = ? LIMIT 1`, [contactId]);
     if (!c.length) {
       return res.status(404).json({ success: false, message: "Contact not found" });
     }
 
-    // Insert vehicle
     const [ins] = await db.query(
-      `INSERT INTO contact_vehicles (contact_id, model_id, variant_id, chassis_number, engine_number)
-       VALUES (?,?,?,?,?)`,
-      [contactId, modelId, variantId, chassis, engine]
+      `INSERT INTO contact_vehicles (contact_id, model_id, variant_id, chassis_number, engine_number, rto_number)
+       VALUES (?,?,?,?,?,?)`,
+      [contactId, modelId, variantId, chassis, engine, safeText(rtoNumber)]
     );
 
     const vehicleId = ins.insertId;
 
     const [rows] = await db.query(
-      `SELECT cv.id as vehicle_id, cv.chassis_number, cv.engine_number,
+      `SELECT cv.id as vehicle_id, cv.chassis_number, cv.engine_number, cv.rto_number,
               vm.model_name, vv.variant_name
        FROM contact_vehicles cv
        LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
@@ -899,7 +877,6 @@ exports.addVehicleToContact = async (req, res) => {
 
     return res.status(201).json({ success: true, data: rows[0] });
   } catch (err) {
-    // Handle duplicate chassis/engine
     if (err?.code === "ER_DUP_ENTRY") {
       return res.status(409).json({
         success: false,
@@ -973,9 +950,13 @@ exports.exportContactsExcel = async (req, res) => {
             SELECT 1 FROM contact_vehicles v
             WHERE v.contact_id=c.id AND v.engine_number LIKE ?
           )
+          OR EXISTS (
+            SELECT 1 FROM contact_vehicles v
+            WHERE v.contact_id=c.id AND v.rto_number LIKE ?
+          )
         )
       `;
-      params.push(like, like, like, like, like, like);
+      params.push(like, like, like, like, like, like, like);
     }
 
     sql += ` ORDER BY c.updated_at DESC, c.id DESC LIMIT 5000`;

@@ -1,67 +1,86 @@
 const express = require("express");
-const router = express.Router();
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 
+const router = express.Router();
+const c = require("../controllers/insurancePoliciesController");
 const { authMiddleware } = require("../middleware/authMiddleware");
 const { requirePermission } = require("../middleware/permissionMiddleware");
 
-const insurancePoliciesController = require("../controllers/insurancePoliciesController");
+const uploadDir = path.join(__dirname, "..", "uploads", "inspection");
+fs.mkdirSync(uploadDir, { recursive: true });
 
-// Ensure upload folder exists
-const uploadDir = path.join(__dirname, "..", "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "");
+    cb(null, `insurance_${Date.now()}_${Math.round(Math.random() * 1e9)}${ext}`);
+  },
+});
 
-const upload = multer({ dest: uploadDir });
+function fileFilter(_req, file, cb) {
+  const mime = String(file.mimetype || "").toLowerCase();
+  if (mime.startsWith("image/") || mime === "application/pdf") return cb(null, true);
+  return cb(new Error("Only image or PDF files are allowed"));
+}
 
-// View list
-router.get(
-  "/",
-  authMiddleware,
-  requirePermission("view_insurance"),
-  insurancePoliciesController.getAllPolicies
-);
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 1,
+  },
+  fileFilter,
+});
 
-// Create single policy (manual add)
+function uploadPolicyFile(req, res, next) {
+  upload.fields([
+    { name: "uploaded_file", maxCount: 1 },
+    { name: "inspection_photo", maxCount: 1 }, // backward compatibility
+  ])(req, res, function (err) {
+    if (err) {
+      return res.status(400).json({
+        success: false,
+        message: err.message || "Upload failed",
+      });
+    }
+    next();
+  });
+}
+
+router.get("/", authMiddleware, requirePermission("view_insurance"), c.getAllPolicies);
+router.get("/form-meta", authMiddleware, requirePermission("add_insurance"), c.getFormMeta);
+router.get("/export", authMiddleware, requirePermission("export_insurance"), c.exportPolicies);
+
 router.post(
   "/",
   authMiddleware,
   requirePermission("add_insurance"),
-  insurancePoliciesController.createPolicy
+  uploadPolicyFile,
+  c.createPolicy
 );
 
-// Renew policy (if you use PUT/POST renew, keep your existing controller mapping)
-router.post(
-  "/renew",
+router.put(
+  "/:id",
   authMiddleware,
   requirePermission("renew_policy"),
-  insurancePoliciesController.renewPolicy
+  c.updatePolicyBasic
 );
 
-// Export (permission-based)
-router.get(
-  "/export",
-  authMiddleware,
-  requirePermission("export_insurance"),
-  insurancePoliciesController.exportPolicies
-);
-
-// Import CSV/JSON rows (permission-based)
 router.post(
   "/bulk-import",
   authMiddleware,
   requirePermission("import_insurance"),
-  insurancePoliciesController.bulkImportPolicies
+  c.bulkImportPolicies
 );
 
-// Import Excel file (permission-based)
 router.post(
   "/import",
   authMiddleware,
   requirePermission("import_insurance"),
   upload.single("file"),
-  insurancePoliciesController.importPoliciesExcel
+  c.importPoliciesExcel
 );
 
 module.exports = router;

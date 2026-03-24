@@ -69,12 +69,14 @@ app.use("/api/insurance", require("./routes/insurance"));
 app.use("/api/insurance-policies", require("./routes/insurancePolicies"));
 app.use("/api/insurance-combined", require("./routes/insuranceCombined"));
 app.use("/api/insurance-followup", require("./routes/insuranceFollowup"));
+app.use("/api/renewal", require("./routes/renewal"));
 
 app.use("/api", require("./routes/whatsappSettings"));
 app.use("/api/pipeline", require("./routes/pipeline"));
 
 // ✅ WhatsApp Logs APIs
 app.use("/api/whatsapp", require("./routes/whatsappLogs"));
+
 
 // ✅ Dropdown master APIs
 try {

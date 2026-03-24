@@ -1,57 +1,46 @@
-// backend/routes/renewal.js
+const express = require("express");
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 
-const express = require('express');
 const router = express.Router();
+const renewalController = require("../controllers/renewalController");
+const { authMiddleware, requireRole } = require("../middleware/authMiddleware");
+const { requirePermission } = require("../middleware/permissionMiddleware");
 
-const renewalController = require('../controllers/renewalController');
-const {
-  authMiddleware,
-  requireRole,
-} = require('../middleware/authMiddleware');
+const uploadDir = path.join(__dirname, "..", "uploads", "inspection");
+fs.mkdirSync(uploadDir, { recursive: true });
 
-// --------------------------------------------------
-// CREATE renewal for a sale
-// POST /api/renewal/:sale_id
-// Allowed: owner, manager, renewal, sales
-// --------------------------------------------------
-router.post(
-  '/:sale_id',
-  authMiddleware,
-  requireRole('owner', 'manager', 'renewal', 'sales'),
-  renewalController.createRenewal
-);
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "");
+    cb(null, `renewal_inspection_${Date.now()}_${Math.round(Math.random() * 1e9)}${ext}`);
+  },
+});
 
-// --------------------------------------------------
-// GET renewal for a sale
-// GET /api/renewal/:sale_id
-// --------------------------------------------------
+const upload = multer({ storage });
+
 router.get(
-  '/:sale_id',
+  "/dashboard",
   authMiddleware,
-  requireRole('owner', 'manager', 'renewal', 'sales'),
-  renewalController.getRenewal
+  requirePermission("view_insurance"),
+  renewalController.getRenewalDashboard
 );
 
-// --------------------------------------------------
-// UPDATE renewal for a sale
-// PUT /api/renewal/:sale_id
-// --------------------------------------------------
-router.put(
-  '/:sale_id',
+router.get(
+  "/export",
   authMiddleware,
-  requireRole('owner', 'manager', 'renewal', 'sales'),
-  renewalController.updateRenewal
+  requirePermission("export_insurance"),
+  renewalController.exportRenewalDashboard
 );
 
-// --------------------------------------------------
-// DELETE renewal for a sale
-// DELETE /api/renewal/:sale_id
-// --------------------------------------------------
-router.delete(
-  '/:sale_id',
+router.post(
+  "/:sale_id",
   authMiddleware,
-  requireRole('owner', 'manager', 'renewal'),
-  renewalController.deleteRenewal
+  requireRole("owner", "admin", "manager", "renewal", "sales", "rc"),
+  upload.single("inspection_photo"),
+  renewalController.createRenewal
 );
 
 module.exports = router;

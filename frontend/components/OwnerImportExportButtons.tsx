@@ -45,11 +45,9 @@ const downloadTextFile = (filename: string, content: string, mime = "text/plain"
 };
 
 const normalizePhone = (v: any) => String(v ?? "").replace(/\D/g, "").slice(0, 10);
-
 const isYYYYMMDD = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 const parseCSV = (csvText: string) => {
-  // simple CSV parser (supports quoted values)
   const lines = csvText.replace(/\r/g, "").split("\n").filter(Boolean);
   if (!lines.length) return { headers: [], rows: [] as Record<string, string>[] };
 
@@ -97,16 +95,10 @@ export default function OwnerImportExportButtons({
 }: Props) {
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // preview modal state
   const [showPreview, setShowPreview] = useState(false);
   const [previewRows, setPreviewRows] = useState<PreviewRow[]>([]);
-  const [previewSummary, setPreviewSummary] = useState<{ total: number; ok: number; bad: number }>({
-    total: 0,
-    ok: 0,
-    bad: 0,
-  });
-  const [previewErr, setPreviewErr] = useState<string>("");
-
+  const [previewSummary, setPreviewSummary] = useState({ total: 0, ok: 0, bad: 0 });
+  const [previewErr, setPreviewErr] = useState("");
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -180,15 +172,13 @@ export default function OwnerImportExportButtons({
       return;
     }
 
-    const validated = rows.map((r, idx) => validateRow(r, idx + 2)); // +2 = header row + 1-based
+    const validated = rows.map((r, idx) => validateRow(r, idx + 2));
     const ok = validated.filter((x) => x.ok).length;
     const bad = validated.length - ok;
 
     setPreviewRows(validated);
     setPreviewSummary({ total: validated.length, ok, bad });
     setShowPreview(true);
-
-    // keep file in memory (store on ref)
     (fileRef.current as any)._selectedFile = file;
   };
 
@@ -204,7 +194,6 @@ export default function OwnerImportExportButtons({
 
     setImporting(true);
     try {
-      // Send only valid rows as JSON bulk import
       const payload = okRows.map((r) => ({
         policy_no: r.policy_no || null,
         customer_name: r.customer_name,
@@ -235,55 +224,24 @@ export default function OwnerImportExportButtons({
   const exportFiltered = async () => {
     setExporting(true);
     try {
-      // Get large list from combined endpoint with filters
-      const res = await api.get("/api/insurance-combined", {
+      const res = await api.get("/api/insurance-combined/export", {
         params: {
-          page: 1,
-          pageSize: 50000,
           source: filters.source,
           search: filters.search?.trim() || undefined,
           from: filters.from || undefined,
           to: filters.to || undefined,
+          status: filters.status,
         },
+        responseType: "blob",
       });
 
-      const data: any[] = res.data?.data || [];
-
-      const rows = data.filter((r) => {
-        const d = Number(r.days_left ?? 999999);
-        if (filters.status === "expired") return d < 0;
-        if (filters.status === "expiring") return d >= 0 && d <= 10;
-        if (filters.status === "active") return d > 10;
-        return true;
-      });
-
-      const header = [
-        "source",
-        "policy_no",
-        "customer_name",
-        "phone",
-        "vehicle_no",
-        "model_name",
-        "company",
-        "start_date",
-        "expiry_date",
-        "days_left",
-      ];
-
-      const csv = [
-        header.join(","),
-        ...rows.map((r) =>
-          header
-            .map((k) => {
-              const v = r[k] ?? "";
-              const s = String(v).replace(/"/g, '""');
-              return `"${s}"`;
-            })
-            .join(",")
-        ),
-      ].join("\n");
-
-      downloadTextFile("insurance_export_filtered.csv", csv, "text/csv");
+      const blob = new Blob([res.data], { type: "text/csv;charset=utf-8;" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "insurance_combined.csv";
+      a.click();
+      window.URL.revokeObjectURL(url);
     } catch (e: any) {
       alert(e?.response?.data?.message || e?.message || "Export failed");
     } finally {
@@ -293,7 +251,6 @@ export default function OwnerImportExportButtons({
 
   return (
     <>
-      {/* Hidden file input */}
       <input
         ref={fileRef}
         type="file"
@@ -305,15 +262,9 @@ export default function OwnerImportExportButtons({
         }}
       />
 
-      {/* Buttons */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         {isOwnerOrAllowedImport && (
-          <button
-            style={btn}
-            onClick={openFilePicker}
-            disabled={importing}
-            title="Import CSV (with preview + validation)"
-          >
+          <button style={btn} onClick={openFilePicker} disabled={importing}>
             {importing ? "Importing..." : "Import"}
           </button>
         )}
@@ -334,15 +285,12 @@ export default function OwnerImportExportButtons({
         )}
       </div>
 
-      {/* Preview Modal */}
       {showPreview && (
         <div style={overlay}>
           <div style={modal}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h3 style={{ margin: 0 }}>Import Preview</h3>
-              <button style={closeBtn} onClick={() => setShowPreview(false)}>
-                X
-              </button>
+              <button style={closeBtn} onClick={() => setShowPreview(false)}>X</button>
             </div>
 
             {previewErr ? (
@@ -352,8 +300,7 @@ export default function OwnerImportExportButtons({
             ) : (
               <>
                 <div style={{ marginTop: 12, fontSize: 13, color: "#374151" }}>
-                  Total: <b>{previewSummary.total}</b> | Valid: <b>{previewSummary.ok}</b> | Invalid:{" "}
-                  <b>{previewSummary.bad}</b>
+                  Total: <b>{previewSummary.total}</b> | Valid: <b>{previewSummary.ok}</b> | Invalid: <b>{previewSummary.bad}</b>
                 </div>
 
                 <div style={{ marginTop: 12, maxHeight: 380, overflow: "auto", border: "1px solid #eee", borderRadius: 10 }}>
@@ -384,9 +331,7 @@ export default function OwnerImportExportButtons({
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
-                  <button style={btnOutline} onClick={() => setShowPreview(false)}>
-                    Cancel
-                  </button>
+                  <button style={btnOutline} onClick={() => setShowPreview(false)}>Cancel</button>
                   <button style={btn} onClick={confirmImport} disabled={importing || previewSummary.ok === 0}>
                     {importing ? "Importing..." : `Import ${previewSummary.ok} Valid Rows`}
                   </button>

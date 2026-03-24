@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import AuthGuard from "@/components/AuthGuard";
 import api from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -16,6 +16,7 @@ type VehicleRow = {
   id: string;
   chassis_number: string;
   engine_number: string;
+  rto_number: string;
   model_id: number | "";
   variant_id: number | "";
 };
@@ -40,6 +41,8 @@ const TEHSILS_BY_DISTRICT: Record<string, string[]> = {
 
 export default function NewContactPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo") || "";
 
   const { hasPermission, loading: permsLoading } = usePermissions();
   const u = getUser();
@@ -59,7 +62,7 @@ export default function NewContactPage() {
   const [phones, setPhones] = useState<PhoneRow[]>([{ id: uid(), phone: "", is_primary: true }]);
 
   const [vehicles, setVehicles] = useState<VehicleRow[]>([
-    { id: uid(), chassis_number: "", engine_number: "", model_id: "", variant_id: "" },
+    { id: uid(), chassis_number: "", engine_number: "", rto_number: "", model_id: "", variant_id: "" },
   ]);
 
   const [models, setModels] = useState<ModelRow[]>([]);
@@ -96,12 +99,12 @@ export default function NewContactPage() {
     const list = DISTRICTS_BY_STATE[state] || [];
     if (list.length && district && !list.includes(district)) setDistrict("");
     setTehsil("");
-  }, [state]);
+  }, [state, district]);
 
   useEffect(() => {
     const list = TEHSILS_BY_DISTRICT[district] || [];
     if (list.length && tehsil && !list.includes(tehsil)) setTehsil("");
-  }, [district]);
+  }, [district, tehsil]);
 
   const setPrimary = (id: string) => {
     setPhones((prev) => prev.map((p) => ({ ...p, is_primary: p.id === id })));
@@ -119,12 +122,12 @@ export default function NewContactPage() {
   };
 
   const addVehicleRow = () =>
-    setVehicles((v) => [...v, { id: uid(), chassis_number: "", engine_number: "", model_id: "", variant_id: "" }]);
+    setVehicles((v) => [...v, { id: uid(), chassis_number: "", engine_number: "", rto_number: "", model_id: "", variant_id: "" }]);
 
   const removeVehicleRow = (id: string) => {
     setVehicles((prev) => {
       const next = prev.filter((v) => v.id !== id);
-      if (next.length === 0) return [{ id: uid(), chassis_number: "", engine_number: "", model_id: "", variant_id: "" }];
+      if (next.length === 0) return [{ id: uid(), chassis_number: "", engine_number: "", rto_number: "", model_id: "", variant_id: "" }];
       return next;
     });
   };
@@ -133,7 +136,6 @@ export default function NewContactPage() {
     setError(null);
 
     if (!canCreate) return setError("Permission denied: cannot create contacts");
-
     if (!firstName.trim()) return setError("First name is required");
     if (!lastName.trim()) return setError("Last name is required");
 
@@ -152,10 +154,11 @@ export default function NewContactPage() {
       .map((v) => ({
         chassis_number: v.chassis_number.trim(),
         engine_number: v.engine_number.trim(),
+        rto_number: v.rto_number.trim(),
         model_id: v.model_id === "" ? null : v.model_id,
         variant_id: v.variant_id === "" ? null : v.variant_id,
       }))
-      .filter((v) => v.chassis_number || v.engine_number);
+      .filter((v) => v.chassis_number || v.engine_number || v.rto_number);
 
     for (const v of cleanedVehicles) {
       if (!v.chassis_number || !v.engine_number) {
@@ -178,8 +181,17 @@ export default function NewContactPage() {
       });
 
       const newId = res.data?.data?.id;
-      if (newId) router.push(`/contacts/${newId}`);
-      else router.push("/contacts");
+
+      if (newId && returnTo) {
+        const sep = returnTo.includes("?") ? "&" : "?";
+        router.push(`${returnTo}${sep}contactId=${newId}`);
+      } else if (newId) {
+        router.push(`/contacts/${newId}`);
+      } else if (returnTo) {
+        router.push(returnTo);
+      } else {
+        router.push("/contacts");
+      }
     } catch (e: any) {
       setError(e?.response?.data?.message || "Failed to create contact");
     } finally {
@@ -223,7 +235,6 @@ export default function NewContactPage() {
             {error && <div className="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-700">{error}</div>}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Contact Details */}
               <div className="bg-white rounded-xl shadow-md p-4">
                 <h2 className="font-semibold mb-3">Contact Details</h2>
 
@@ -242,9 +253,7 @@ export default function NewContactPage() {
                   <label className="block text-sm text-gray-600 mb-1">State</label>
                   <select value={state} onChange={(e) => setState(e.target.value)} className="w-full px-3 py-2 border rounded">
                     {STATES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
+                      <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
                 </div>
@@ -255,9 +264,7 @@ export default function NewContactPage() {
                     <select value={district} onChange={(e) => setDistrict(e.target.value)} className="w-full px-3 py-2 border rounded">
                       <option value="">Select District</option>
                       {(DISTRICTS_BY_STATE[state] || []).map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
+                        <option key={d} value={d}>{d}</option>
                       ))}
                     </select>
                   </div>
@@ -266,9 +273,7 @@ export default function NewContactPage() {
                     <select value={tehsil} onChange={(e) => setTehsil(e.target.value)} className="w-full px-3 py-2 border rounded">
                       <option value="">Select Tehsil</option>
                       {(TEHSILS_BY_DISTRICT[district] || []).map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
+                        <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
                   </div>
@@ -285,7 +290,6 @@ export default function NewContactPage() {
                 </div>
               </div>
 
-              {/* Phones */}
               <div className="bg-white rounded-xl shadow-md p-4">
                 <h2 className="font-semibold mb-3">Mobiles</h2>
 
@@ -325,7 +329,6 @@ export default function NewContactPage() {
                 <div className="text-xs text-gray-500 mt-2">At least 1 valid 10-digit mobile is required.</div>
               </div>
 
-              {/* Vehicles */}
               <div className="bg-white rounded-xl shadow-md p-4 lg:col-span-2">
                 <h2 className="font-semibold mb-3">Vehicles</h2>
 
@@ -365,6 +368,22 @@ export default function NewContactPage() {
                           </div>
 
                           <div>
+                            <label className="block text-sm text-gray-600 mb-1">RTO Number</label>
+                            <input
+                              value={v.rto_number}
+                              onChange={(e) =>
+                                setVehicles((prev) =>
+                                  prev.map((x) => (x.id === v.id ? { ...x, rto_number: e.target.value.toUpperCase() } : x))
+                                )
+                              }
+                              placeholder="MP54AB1234"
+                              className="w-full px-3 py-2 border rounded"
+                            />
+                          </div>
+
+                          <div />
+
+                          <div>
                             <label className="block text-sm text-gray-600 mb-1">Model</label>
                             <select
                               value={v.model_id === "" ? "" : String(v.model_id)}
@@ -380,9 +399,7 @@ export default function NewContactPage() {
                             >
                               <option value="">Select Model</option>
                               {activeModels.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.model_name}
-                                </option>
+                                <option key={m.id} value={m.id}>{m.model_name}</option>
                               ))}
                             </select>
                           </div>
@@ -402,9 +419,7 @@ export default function NewContactPage() {
                             >
                               <option value="">Select Variant</option>
                               {variantsForModel.map((vv) => (
-                                <option key={vv.id} value={vv.id}>
-                                  {vv.variant_name}
-                                </option>
+                                <option key={vv.id} value={vv.id}>{vv.variant_name}</option>
                               ))}
                             </select>
                           </div>

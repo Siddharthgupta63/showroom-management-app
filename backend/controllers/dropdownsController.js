@@ -15,6 +15,12 @@ const ALLOWED_TYPES = new Set([
   "vehicle_transporter_name",
   "nominee_relation",
   "rc_agent",
+
+  // new for renewal/policy
+  "insurance_model",
+  "insurance_variant",
+  "cpa_included",
+  "policy_status",
 ]);
 
 function normType(t) {

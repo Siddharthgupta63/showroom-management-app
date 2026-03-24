@@ -7,13 +7,10 @@ const {
   exportCombined,
 } = require("../controllers/insuranceCombinedController");
 
-const { authMiddleware, requireRole } = require("../middleware/authMiddleware");
+const { authMiddleware } = require("../middleware/authMiddleware");
 const { requirePermission } = require("../middleware/permissionMiddleware");
 
-// list
 router.get("/", authMiddleware, requirePermission("view_insurance"), getCombinedInsurance);
-
-// export OWNER ONLY
-router.get("/export", authMiddleware, requireRole("owner"), exportCombined);
+router.get("/export", authMiddleware, requirePermission("export_insurance"), exportCombined);
 
 module.exports = router;
