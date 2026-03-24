@@ -4,7 +4,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 
 type Filters = {
-  source: "all" | "SALE" | "RENEWAL";
+  source: "all" | "SALE" | "RENEWAL" | "DIRECT";
   search: string;
   from: string;
   to: string;
