@@ -188,6 +188,10 @@ exports.getCombinedInsurance = async (req, res) => {
       `
       SELECT
         t.*,
+        lf.latest_followup_date,
+        lf.latest_followup_remark,
+        lf.latest_followup_disposition,
+        lf.next_followup_date,
         CASE
           WHEN t.days_left < 0 THEN 'black'
           WHEN t.days_left BETWEEN 0 AND 3 THEN 'red'
@@ -195,8 +199,30 @@ exports.getCombinedInsurance = async (req, res) => {
           ELSE 'green'
         END AS status_color
       FROM (${unionSql}) t
+      LEFT JOIN (
+        SELECT
+          x.source,
+          x.source_id,
+          x.followup_date AS latest_followup_date,
+          x.remark AS latest_followup_remark,
+          x.disposition AS latest_followup_disposition,
+          x.next_followup_date
+        FROM insurance_followup_logs x
+        INNER JOIN (
+          SELECT source, source_id, MAX(id) AS max_id
+          FROM insurance_followup_logs
+          GROUP BY source, source_id
+        ) y
+          ON y.source = x.source
+         AND y.source_id = x.source_id
+         AND y.max_id = x.id
+      ) lf
+        ON lf.source = t.source
+       AND lf.source_id = t.id
       ${whereSql}
       ORDER BY
+        CASE WHEN lf.next_followup_date IS NULL THEN 1 ELSE 0 END ASC,
+        lf.next_followup_date ASC,
         CASE WHEN t.days_left = 0 THEN 0 ELSE 1 END ASC,
         CASE WHEN t.days_left < 0 THEN 1 ELSE 0 END ASC,
         CASE WHEN t.days_left >= 0 THEN t.days_left ELSE 999999 END ASC,
@@ -297,10 +323,38 @@ exports.exportCombined = async (req, res) => {
         t.followup2_remark,
         t.followup3_date,
         t.followup3_remark,
+        lf.latest_followup_date,
+        lf.latest_followup_remark,
+        lf.latest_followup_disposition,
+        lf.next_followup_date,
         t.uploaded_file
       FROM (${unionSql}) t
+      LEFT JOIN (
+        SELECT
+          x.source,
+          x.source_id,
+          x.followup_date AS latest_followup_date,
+          x.remark AS latest_followup_remark,
+          x.disposition AS latest_followup_disposition,
+          x.next_followup_date
+        FROM insurance_followup_logs x
+        INNER JOIN (
+          SELECT source, source_id, MAX(id) AS max_id
+          FROM insurance_followup_logs
+          GROUP BY source, source_id
+        ) y
+          ON y.source = x.source
+         AND y.source_id = x.source_id
+         AND y.max_id = x.id
+      ) lf
+        ON lf.source = t.source
+       AND lf.source_id = t.id
       ${whereSql}
-      ORDER BY t.expiry_date ASC, t.id DESC
+      ORDER BY
+        CASE WHEN lf.next_followup_date IS NULL THEN 1 ELSE 0 END ASC,
+        lf.next_followup_date ASC,
+        t.expiry_date ASC,
+        t.id DESC
       `,
       params
     );
@@ -310,7 +364,9 @@ exports.exportCombined = async (req, res) => {
       "chassis_number","engine_number","company","start_date","expiry_date","days_left",
       "status_label","cpa_included","cpa_number","insurance_broker","premium_amount",
       "invoice_number","remarks","followup1_date","followup1_remark","followup2_date",
-      "followup2_remark","followup3_date","followup3_remark","uploaded_file",
+      "followup2_remark","followup3_date","followup3_remark",
+      "latest_followup_date","latest_followup_remark","latest_followup_disposition","next_followup_date",
+      "uploaded_file",
     ];
 
     const csvLines = [
@@ -322,7 +378,9 @@ exports.exportCombined = async (req, res) => {
           fmtDate(r.expiry_date), r.days_left, r.status_label, r.cpa_included, r.cpa_number,
           r.insurance_broker, r.premium_amount, r.invoice_number, r.remarks,
           fmtDate(r.followup1_date), r.followup1_remark, fmtDate(r.followup2_date),
-          r.followup2_remark, fmtDate(r.followup3_date), r.followup3_remark, r.uploaded_file,
+          r.followup2_remark, fmtDate(r.followup3_date), r.followup3_remark,
+          fmtDate(r.latest_followup_date), r.latest_followup_remark, r.latest_followup_disposition,
+          fmtDate(r.next_followup_date), r.uploaded_file,
         ].map(csvCell).join(",")
       ),
     ];

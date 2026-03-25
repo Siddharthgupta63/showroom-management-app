@@ -1,4 +1,3 @@
-// backend/routes/insuranceFollowup.js
 const express = require("express");
 const router = express.Router();
 
@@ -10,8 +9,32 @@ const authMiddleware = authMod.authMiddleware || authMod;
 const permMod = require("../middleware/permissionMiddleware");
 const requirePermission = permMod.requirePermission || permMod;
 
-router.get("/:source/:id", authMiddleware, requirePermission("view_insurance"), ctrl.getFollowups);
+router.get(
+  "/:source/:id",
+  authMiddleware,
+  requirePermission("view_insurance"),
+  ctrl.getFollowups
+);
 
-router.put("/:source/:id", authMiddleware, requirePermission("renew_policy"), ctrl.updateFollowups);
+router.post(
+  "/",
+  authMiddleware,
+  requirePermission("renew_policy"),
+  ctrl.createFollowup
+);
+
+router.put(
+  "/:followupId",
+  authMiddleware,
+  requirePermission("renew_policy"),
+  ctrl.updateFollowup
+);
+
+router.delete(
+  "/:followupId",
+  authMiddleware,
+  requirePermission("renew_policy"),
+  ctrl.deleteFollowup
+);
 
 module.exports = router;

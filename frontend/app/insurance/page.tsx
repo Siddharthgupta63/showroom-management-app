@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getUser } from "@/lib/auth";
 import OwnerImportExportButtons from "@/components/OwnerImportExportButtons";
+import FollowupModal from "@/components/FollowupModal";
 
 function getRoleFromToken(): string | null {
   try {
@@ -55,6 +56,10 @@ type Row = {
   followup2_remark?: string | null;
   followup3_date?: string | null;
   followup3_remark?: string | null;
+  latest_followup_date?: string | null;
+  latest_followup_remark?: string | null;
+  latest_followup_disposition?: string | null;
+  next_followup_date?: string | null;
   cpa_number?: string | null;
   cpa_included?: number | boolean | null;
   agent?: string | null;
@@ -166,21 +171,33 @@ function detailValue(v: any) {
   return String(v);
 }
 
-function crmStatusTone(daysLeft: number) {
-  if (daysLeft < 0) {
-    return { bg: "#fee2e2", color: "#991b1b", label: "Expired" };
-  }
-  if (daysLeft <= 3) {
-    return { bg: "#ffedd5", color: "#9a3412", label: "Urgent" };
-  }
-  if (daysLeft <= 10) {
-    return { bg: "#fef3c7", color: "#92400e", label: "Expiring Soon" };
-  }
-  return { bg: "#dcfce7", color: "#166534", label: "Active" };
+function dispositionLabel(v?: string | null) {
+  const x = String(v || "").toUpperCase();
+  if (x === "INTERESTED") return "Interested";
+  if (x === "CALL_BACK") return "Call Back";
+  if (x === "NO_RESPONSE") return "No Response";
+  if (x === "RENEWED") return "Renewed";
+  if (x === "NOT_INTERESTED") return "Not Interested";
+  return "-";
 }
 
-function followupStepDone(date?: string | null, remark?: string | null) {
-  return !!(date || remark);
+function dispositionTone(v?: string | null) {
+  const x = String(v || "").toUpperCase();
+
+  if (x === "INTERESTED") return { bg: "#dcfce7", color: "#166534" };
+  if (x === "CALL_BACK") return { bg: "#dbeafe", color: "#1d4ed8" };
+  if (x === "NO_RESPONSE") return { bg: "#fef3c7", color: "#92400e" };
+  if (x === "RENEWED") return { bg: "#ede9fe", color: "#6d28d9" };
+  if (x === "NOT_INTERESTED") return { bg: "#fee2e2", color: "#991b1b" };
+
+  return { bg: "#f3f4f6", color: "#374151" };
+}
+
+function shortRemark(v?: string | null, max = 42) {
+  const s = String(v || "").trim();
+  if (!s) return "-";
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}...`;
 }
 
 export default function InsurancePage() {
@@ -237,13 +254,6 @@ export default function InsurancePage() {
 
   const [showFollowup, setShowFollowup] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
-  const [f1d, setF1d] = useState("");
-  const [f1r, setF1r] = useState("");
-  const [f2d, setF2d] = useState("");
-  const [f2r, setF2r] = useState("");
-  const [f3d, setF3d] = useState("");
-  const [f3r, setF3r] = useState("");
-  const [savingFollowup, setSavingFollowup] = useState(false);
 
   const [showDetails, setShowDetails] = useState(false);
   const [detailRowState, setDetailRowState] = useState<Row | null>(null);
@@ -289,6 +299,10 @@ export default function InsurancePage() {
         followup2_remark: r.followup2_remark ?? null,
         followup3_date: r.followup3_date ?? null,
         followup3_remark: r.followup3_remark ?? null,
+        latest_followup_date: r.latest_followup_date ?? null,
+        latest_followup_remark: r.latest_followup_remark ?? null,
+        latest_followup_disposition: r.latest_followup_disposition ?? null,
+        next_followup_date: r.next_followup_date ?? null,
         cpa_number: r.cpa_number ?? null,
         cpa_included: r.cpa_included ?? null,
         agent: r.agent ?? null,
@@ -322,6 +336,7 @@ export default function InsurancePage() {
   useEffect(() => {
     if (loading) return;
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, page, pageSize, sourceFilter, from, to, statusFilter, canView]);
 
   useEffect(() => {
@@ -331,44 +346,14 @@ export default function InsurancePage() {
       fetchData();
     }, 300);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   const filteredRows = useMemo(() => rows, [rows]);
 
   const openFollowup = (row: Row) => {
     setSelected(row);
-    setF1d(row.followup1_date ? toYYYYMMDD(row.followup1_date) : "");
-    setF1r(row.followup1_remark || "");
-    setF2d(row.followup2_date ? toYYYYMMDD(row.followup2_date) : "");
-    setF2r(row.followup2_remark || "");
-    setF3d(row.followup3_date ? toYYYYMMDD(row.followup3_date) : "");
-    setF3r(row.followup3_remark || "");
     setShowFollowup(true);
-  };
-
-  const saveFollowups = async () => {
-    if (!selected) return;
-
-    try {
-      setSavingFollowup(true);
-
-      await api.put(`/api/insurance-followup/${selected.source}/${selected.id}`, {
-        followup1_date: f1d || null,
-        followup1_remark: f1r || null,
-        followup2_date: f2d || null,
-        followup2_remark: f2r || null,
-        followup3_date: f3d || null,
-        followup3_remark: f3r || null,
-      });
-
-      setShowFollowup(false);
-      setSelected(null);
-      fetchData();
-    } catch (e: any) {
-      alert(e?.response?.data?.message || e?.message || "Failed to save follow-up");
-    } finally {
-      setSavingFollowup(false);
-    }
   };
 
   const openRenew = (row: Row) => {
@@ -561,6 +546,8 @@ export default function InsurancePage() {
                 "Chassis / Engine",
                 "Company",
                 "Dates",
+                "Latest Follow-up",
+                "Next Follow-up",
                 "Status",
                 "Action",
               ].map((h) => (
@@ -572,6 +559,8 @@ export default function InsurancePage() {
           <tbody>
             {filteredRows.map((row) => {
               const key = `${row.source}-${row.id}`;
+              const tone = dispositionTone(row.latest_followup_disposition);
+
               return (
                 <tr key={key}>
                   <td style={tdCompact}>
@@ -623,6 +612,65 @@ export default function InsurancePage() {
                   </td>
 
                   <td style={tdCompact}>
+                    <div style={miniStackCompact}>
+                      {row.latest_followup_disposition ? (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            padding: "3px 8px",
+                            borderRadius: 999,
+                            fontSize: 11,
+                            fontWeight: 800,
+                            background: tone.bg,
+                            color: tone.color,
+                            marginBottom: 6,
+                          }}
+                        >
+                          {dispositionLabel(row.latest_followup_disposition)}
+                        </span>
+                      ) : (
+                        <div style={subTextCompact}>No follow-up</div>
+                      )}
+
+                      <div><b>Date:</b> {niceDate(row.latest_followup_date)}</div>
+                      <div title={row.latest_followup_remark || ""}>
+                        <b>Note:</b> {shortRemark(row.latest_followup_remark)}
+                      </div>
+                    </div>
+                  </td>
+
+                  <td style={tdCompact}>
+                    <div style={miniStackCompact}>
+                      <div style={{ fontWeight: 800 }}>
+                        {niceDate(row.next_followup_date)}
+                      </div>
+
+                      {row.next_followup_date ? (
+                        <button
+                          type="button"
+                          style={{
+                            marginTop: 6,
+                            height: 28,
+                            padding: "0 8px",
+                            borderRadius: 8,
+                            border: "1px solid #d1d5db",
+                            background: "#fff",
+                            fontWeight: 700,
+                            fontSize: 11,
+                            cursor: "pointer",
+                          }}
+                          onClick={() => openFollowup(row)}
+                        >
+                          Update
+                        </button>
+                      ) : (
+                        <div style={subTextCompact}>Not scheduled</div>
+                      )}
+                    </div>
+                  </td>
+
+                  <td style={tdCompact}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
                       <StatusBadge daysLeft={row.days_left} color={row.status_color} />
                     </div>
@@ -656,7 +704,7 @@ export default function InsurancePage() {
 
             {!filteredRows.length && (
               <tr>
-                <td colSpan={9} style={{ padding: 16, color: "#6b7280", fontSize: 13 }}>
+                <td colSpan={11} style={{ padding: 16, color: "#6b7280", fontSize: 13 }}>
                   No records found.
                 </td>
               </tr>
@@ -725,9 +773,10 @@ export default function InsurancePage() {
                   </a>
                 ) : "-"}
               </div></div>
-              <div style={detailCard}><div style={detailLabel}>Follow-up 1 Date</div><div style={detailText}>{niceDate(detailRowState.followup1_date)}</div></div>
-              <div style={detailCard}><div style={detailLabel}>Follow-up 2 Date</div><div style={detailText}>{niceDate(detailRowState.followup2_date)}</div></div>
-              <div style={detailCard}><div style={detailLabel}>Follow-up 3 Date</div><div style={detailText}>{niceDate(detailRowState.followup3_date)}</div></div>
+              <div style={detailCard}><div style={detailLabel}>Latest Follow-up Date</div><div style={detailText}>{niceDate(detailRowState.latest_followup_date)}</div></div>
+              <div style={detailCard}><div style={detailLabel}>Latest Disposition</div><div style={detailText}>{dispositionLabel(detailRowState.latest_followup_disposition)}</div></div>
+              <div style={detailCard}><div style={detailLabel}>Next Follow-up Date</div><div style={detailText}>{niceDate(detailRowState.next_followup_date)}</div></div>
+              <div style={detailCard}><div style={detailLabel}>Latest Follow-up Remark</div><div style={detailText}>{detailValue(detailRowState.latest_followup_remark)}</div></div>
             </div>
 
             {detailRowState.uploaded_file && isImageFile(detailRowState.uploaded_file) && (
@@ -746,21 +795,6 @@ export default function InsurancePage() {
             <div style={{ marginTop: 12 }}>
               <div style={detailLabel}>Remarks</div>
               <div style={remarksBox}>{detailValue(detailRowState.remarks)}</div>
-            </div>
-
-            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
-              <div style={detailCard}>
-                <div style={detailLabel}>Follow-up 1 Remark</div>
-                <div style={detailText}>{detailValue(detailRowState.followup1_remark)}</div>
-              </div>
-              <div style={detailCard}>
-                <div style={detailLabel}>Follow-up 2 Remark</div>
-                <div style={detailText}>{detailValue(detailRowState.followup2_remark)}</div>
-              </div>
-              <div style={detailCard}>
-                <div style={detailLabel}>Follow-up 3 Remark</div>
-                <div style={detailText}>{detailValue(detailRowState.followup3_remark)}</div>
-              </div>
             </div>
           </div>
         </div>
@@ -815,180 +849,15 @@ export default function InsurancePage() {
         </div>
       )}
 
-      {showFollowup && selected && (
-        <div style={drawerOverlay}>
-          <div style={crmDrawer}>
-            <div style={crmDrawerHeader}>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>Follow-up CRM</div>
-                <div style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>
-                  Manage customer communication and renewal tracking
-                </div>
-              </div>
-
-              <button style={closeBtn} onClick={() => setShowFollowup(false)}>X</button>
-            </div>
-
-            <div style={crmTopCard}>
-              <div style={crmTopRow}>
-                <div>
-                  <div style={crmCustomerName}>{selected.customer_name || "-"}</div>
-                  <div style={crmSubLine}>
-                    {selected.phone || "-"} • {selected.vehicle_no || "-"} • {selected.company || "-"}
-                  </div>
-                </div>
-
-                <span
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 999,
-                    fontSize: 12,
-                    fontWeight: 800,
-                    background: crmStatusTone(selected.days_left).bg,
-                    color: crmStatusTone(selected.days_left).color,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {crmStatusTone(selected.days_left).label} • {selected.days_left < 0 ? "Expired" : `${selected.days_left} day(s) left`}
-                </span>
-              </div>
-
-              <div style={crmMiniGrid}>
-                <div style={crmMiniItem}>
-                  <div style={crmMiniLabel}>Policy No</div>
-                  <div style={crmMiniValue}>{selected.policy_no || "-"}</div>
-                </div>
-                <div style={crmMiniItem}>
-                  <div style={crmMiniLabel}>Start Date</div>
-                  <div style={crmMiniValue}>{niceDate(selected.start_date)}</div>
-                </div>
-                <div style={crmMiniItem}>
-                  <div style={crmMiniLabel}>Expiry Date</div>
-                  <div style={crmMiniValue}>{niceDate(selected.expiry_date)}</div>
-                </div>
-                <div style={crmMiniItem}>
-                  <div style={crmMiniLabel}>Source</div>
-                  <div style={crmMiniValue}>{selected.source}</div>
-                </div>
-              </div>
-
-              <div style={crmQuickActions}>
-                <a href={`tel:${selected.phone || ""}`} style={crmQuickBtn}>Call</a>
-                <a
-                  href={`https://wa.me/91${selected.phone || ""}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={crmQuickBtn}
-                >
-                  WhatsApp
-                </a>
-                <button
-                  type="button"
-                  style={crmQuickBtn}
-                  onClick={() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + 3);
-                    setF1d(d.toISOString().slice(0, 10));
-                  }}
-                >
-                  Next in 3 Days
-                </button>
-                <button
-                  type="button"
-                  style={crmQuickBtn}
-                  onClick={() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + 7);
-                    setF1d(d.toISOString().slice(0, 10));
-                  }}
-                >
-                  Next in 7 Days
-                </button>
-              </div>
-            </div>
-
-            <div style={crmSectionTitle}>Follow-up Timeline</div>
-
-            <div style={crmTimelineWrap}>
-              <div style={crmTimelineItem}>
-                <div style={crmTimelineDot(followupStepDone(f1d, f1r))} />
-                <div style={crmTimelineCard}>
-                  <div style={crmTimelineHeader}>
-                    <div style={crmTimelineTitle}>Follow-up 1</div>
-                    <div style={crmTimelineStatus(followupStepDone(f1d, f1r))}>
-                      {followupStepDone(f1d, f1r) ? "Updated" : "Pending"}
-                    </div>
-                  </div>
-                  <div style={crmTimelineInputs}>
-                    <input style={inputCompact} type="date" value={f1d} onChange={(e) => setF1d(e.target.value)} />
-                    <textarea
-                      style={crmTextarea}
-                      value={f1r}
-                      onChange={(e) => setF1r(e.target.value)}
-                      placeholder="Write follow-up 1 remarks..."
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div style={crmTimelineLine} />
-
-              <div style={crmTimelineItem}>
-                <div style={crmTimelineDot(followupStepDone(f2d, f2r))} />
-                <div style={crmTimelineCard}>
-                  <div style={crmTimelineHeader}>
-                    <div style={crmTimelineTitle}>Follow-up 2</div>
-                    <div style={crmTimelineStatus(followupStepDone(f2d, f2r))}>
-                      {followupStepDone(f2d, f2r) ? "Updated" : "Pending"}
-                    </div>
-                  </div>
-                  <div style={crmTimelineInputs}>
-                    <input style={inputCompact} type="date" value={f2d} onChange={(e) => setF2d(e.target.value)} />
-                    <textarea
-                      style={crmTextarea}
-                      value={f2r}
-                      onChange={(e) => setF2r(e.target.value)}
-                      placeholder="Write follow-up 2 remarks..."
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div style={crmTimelineLine} />
-
-              <div style={crmTimelineItem}>
-                <div style={crmTimelineDot(followupStepDone(f3d, f3r))} />
-                <div style={crmTimelineCard}>
-                  <div style={crmTimelineHeader}>
-                    <div style={crmTimelineTitle}>Follow-up 3</div>
-                    <div style={crmTimelineStatus(followupStepDone(f3d, f3r))}>
-                      {followupStepDone(f3d, f3r) ? "Updated" : "Pending"}
-                    </div>
-                  </div>
-                  <div style={crmTimelineInputs}>
-                    <input style={inputCompact} type="date" value={f3d} onChange={(e) => setF3d(e.target.value)} />
-                    <textarea
-                      style={crmTextarea}
-                      value={f3r}
-                      onChange={(e) => setF3r(e.target.value)}
-                      placeholder="Write follow-up 3 remarks..."
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style={crmBottomBar}>
-              <button style={btnOutlineSmallCompact} onClick={() => setShowFollowup(false)}>
-                Cancel
-              </button>
-              <button style={btnPrimarySmallCompact} onClick={saveFollowups} disabled={savingFollowup}>
-                {savingFollowup ? "Saving..." : "Save Follow-up"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <FollowupModal
+        open={showFollowup}
+        onClose={() => {
+          setShowFollowup(false);
+          setSelected(null);
+        }}
+        row={selected}
+        onSaved={fetchData}
+      />
     </div>
   );
 }
@@ -1004,7 +873,7 @@ const filterGridCompact: any = { display: "grid", gridTemplateColumns: "1.1fr 1f
 const inputCompact: any = { height: 34, width: "100%", padding: "0 10px", borderRadius: 8, border: "1px solid #d1d5db", outline: "none", fontSize: 13, background: "#fff" };
 const labelCompact: any = { fontSize: 11, color: "#6b7280", fontWeight: 700, marginBottom: 4 };
 const errorBox: any = { marginTop: 10, padding: 10, borderRadius: 10, background: "#fee2e2", color: "#991b1b", fontWeight: 600, fontSize: 13 };
-const tableCompact: any = { width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 980 };
+const tableCompact: any = { width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 1280 };
 const thCompact: any = { textAlign: "left", padding: "9px 8px", fontSize: 11, color: "#374151", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, whiteSpace: "nowrap" };
 const tdCompact: any = { padding: "9px 8px", borderBottom: "1px solid #f1f5f9", verticalAlign: "top", fontSize: 13 };
 const strongTextCompact: any = { fontWeight: 800, color: "#111827", fontSize: 13 };
@@ -1030,218 +899,3 @@ const detailCard: any = { border: "1px solid #e5e7eb", borderRadius: 12, padding
 const detailLabel: any = { fontSize: 12, color: "#6b7280", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 };
 const detailText: any = { fontSize: 14, color: "#111827", fontWeight: 600, wordBreak: "break-word" };
 const remarksBox: any = { minHeight: 80, border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#fafafa", color: "#111827", fontSize: 14, fontWeight: 500, whiteSpace: "pre-wrap" };
-
-const drawerOverlay: any = {
-  position: "fixed",
-  inset: 0,
-  background: "rgba(15,23,42,0.45)",
-  display: "flex",
-  justifyContent: "flex-end",
-  zIndex: 60,
-};
-
-const crmDrawer: any = {
-  width: "min(640px, 100vw)",
-  height: "100vh",
-  background: "#f8fafc",
-  borderLeft: "1px solid #e5e7eb",
-  boxShadow: "-10px 0 30px rgba(0,0,0,0.12)",
-  padding: 16,
-  overflowY: "auto",
-};
-
-const crmDrawerHeader: any = {
-  position: "sticky",
-  top: 0,
-  zIndex: 2,
-  display: "flex",
-  alignItems: "flex-start",
-  justifyContent: "space-between",
-  gap: 12,
-  marginBottom: 12,
-  paddingBottom: 10,
-  background: "#f8fafc",
-};
-
-const crmTopCard: any = {
-  background: "#fff",
-  border: "1px solid #e5e7eb",
-  borderRadius: 16,
-  padding: 14,
-  boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-  position: "sticky",
-  top: 66,
-  zIndex: 1,
-};
-
-const crmTopRow: any = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: 12,
-  flexWrap: "wrap",
-};
-
-const crmCustomerName: any = {
-  fontSize: 20,
-  fontWeight: 800,
-  color: "#111827",
-};
-
-const crmSubLine: any = {
-  marginTop: 4,
-  fontSize: 13,
-  color: "#6b7280",
-};
-
-const crmMiniGrid: any = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: 10,
-  marginTop: 14,
-};
-
-const crmMiniItem: any = {
-  background: "#f8fafc",
-  border: "1px solid #e5e7eb",
-  borderRadius: 12,
-  padding: 10,
-};
-
-const crmMiniLabel: any = {
-  fontSize: 11,
-  color: "#6b7280",
-  fontWeight: 700,
-  textTransform: "uppercase",
-  marginBottom: 4,
-};
-
-const crmMiniValue: any = {
-  fontSize: 14,
-  color: "#111827",
-  fontWeight: 700,
-};
-
-const crmQuickActions: any = {
-  display: "flex",
-  gap: 8,
-  flexWrap: "wrap",
-  marginTop: 14,
-};
-
-const crmQuickBtn: any = {
-  height: 34,
-  padding: "0 12px",
-  borderRadius: 10,
-  border: "1px solid #d1d5db",
-  background: "#fff",
-  color: "#111827",
-  fontWeight: 700,
-  fontSize: 13,
-  cursor: "pointer",
-  textDecoration: "none",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const crmSectionTitle: any = {
-  marginTop: 18,
-  marginBottom: 12,
-  fontSize: 16,
-  fontWeight: 800,
-  color: "#111827",
-};
-
-const crmTimelineWrap: any = {
-  position: "relative",
-  paddingLeft: 14,
-};
-
-const crmTimelineLine: any = {
-  width: 2,
-  height: 18,
-  background: "#d1d5db",
-  marginLeft: 10,
-};
-
-const crmTimelineItem: any = {
-  display: "flex",
-  gap: 12,
-  alignItems: "flex-start",
-};
-
-const crmTimelineDot = (done: boolean) => ({
-  width: 22,
-  height: 22,
-  minWidth: 22,
-  borderRadius: 999,
-  marginTop: 16,
-  background: done ? "#16a34a" : "#cbd5e1",
-  border: "3px solid #fff",
-  boxShadow: "0 0 0 1px #d1d5db",
-});
-
-const crmTimelineCard: any = {
-  flex: 1,
-  background: "#fff",
-  border: "1px solid #e5e7eb",
-  borderRadius: 16,
-  padding: 14,
-  boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-};
-
-const crmTimelineHeader: any = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 10,
-  flexWrap: "wrap",
-  marginBottom: 10,
-};
-
-const crmTimelineTitle: any = {
-  fontSize: 15,
-  fontWeight: 800,
-  color: "#111827",
-};
-
-const crmTimelineStatus = (done: boolean) => ({
-  fontSize: 12,
-  fontWeight: 800,
-  borderRadius: 999,
-  padding: "6px 10px",
-  background: done ? "#dcfce7" : "#f3f4f6",
-  color: done ? "#166534" : "#6b7280",
-});
-
-const crmTimelineInputs: any = {
-  display: "grid",
-  gridTemplateColumns: "160px 1fr",
-  gap: 10,
-};
-
-const crmTextarea: any = {
-  width: "100%",
-  minHeight: 84,
-  border: "1px solid #d1d5db",
-  borderRadius: 10,
-  padding: 10,
-  fontSize: 13,
-  background: "#fff",
-  resize: "vertical",
-  outline: "none",
-};
-
-const crmBottomBar: any = {
-  position: "sticky",
-  bottom: 0,
-  display: "flex",
-  justifyContent: "flex-end",
-  gap: 10,
-  marginTop: 16,
-  paddingTop: 14,
-  paddingBottom: 6,
-  background: "#f8fafc",
-  boxShadow: "0 -8px 18px rgba(248,250,252,0.95)",
-};
