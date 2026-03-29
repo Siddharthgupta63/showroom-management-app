@@ -1,7 +1,7 @@
 const db = require("../db");
 
-// Full stock list for Stock page
-exports.getAllStock = async (req, res) => {
+// Full stock list for stock page
+exports.getAllStock = async (_req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT
@@ -50,6 +50,7 @@ exports.getAllStock = async (req, res) => {
 
     return res.json({
       success: true,
+      total: Array.isArray(rows) ? rows.length : 0,
       data: rows || [],
     });
   } catch (e) {
@@ -61,8 +62,8 @@ exports.getAllStock = async (req, res) => {
   }
 };
 
-// Only live in-stock rows for sale/vehicle picker usage
-exports.getAvailableStock = async (req, res) => {
+// Only available stock for sale/vehicle picker
+exports.getAvailableStock = async (_req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT
@@ -92,6 +93,7 @@ exports.getAvailableStock = async (req, res) => {
 
     return res.json({
       success: true,
+      total: Array.isArray(rows) ? rows.length : 0,
       data: rows || [],
     });
   } catch (e) {
