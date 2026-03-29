@@ -22,7 +22,9 @@ const storage = multer.diskStorage({
     cb(null, UPLOAD_DIR);
   },
   filename: function (req, file, cb) {
-    const safe = String(file.originalname || "file").replace(/[^\w.\-]+/g, "_").slice(-120);
+    const safe = String(file.originalname || "file")
+      .replace(/[^\w.\-]+/g, "_")
+      .slice(-120);
     const name = `${Date.now()}_${Math.random().toString(16).slice(2)}_${safe}`;
     cb(null, name);
   },
@@ -123,6 +125,93 @@ function normalizeSaleExtraFields(body) {
 }
 
 // =====================================================
+// Stock sync helpers (STRICT stock_item_id architecture)
+// =====================================================
+async function getStockItemByIdForUpdate(conn, stockItemId) {
+  const id = Number(stockItemId || 0);
+  if (!id) return null;
+
+  const [rows] = await conn.query(
+    `
+    SELECT *
+    FROM vehicle_purchase_items
+    WHERE id = ?
+    LIMIT 1
+    FOR UPDATE
+    `,
+    [id]
+  );
+
+  return rows?.[0] || null;
+}
+
+async function assertStockItemAssignable(conn, { stockItemId, contactVehicleId = null, excludeSaleId = null }) {
+  const stock = await getStockItemByIdForUpdate(conn, stockItemId);
+
+  if (!stock) {
+    const err = new Error("Selected stock item not found");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const status = String(stock.status_code || "").toLowerCase();
+  const excludeId = Number(excludeSaleId || 0);
+  const stockSaleId = Number(stock.sale_id || 0);
+
+  if (status === "sold" && stockSaleId && stockSaleId !== excludeId) {
+    const err = new Error(`Selected stock item is already sold (Sale ID: ${stock.sale_id})`);
+    err.statusCode = 409;
+    throw err;
+  }
+
+  if (
+    contactVehicleId &&
+    stock.contact_vehicle_id &&
+    Number(stock.contact_vehicle_id) !== Number(contactVehicleId)
+  ) {
+    const err = new Error("Selected stock item does not belong to the chosen vehicle");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return stock;
+}
+
+async function markStockItemSold(conn, stockItemId, saleId, contactVehicleId) {
+  const id = Number(stockItemId || 0);
+  if (!id) return;
+
+  await conn.query(
+    `
+    UPDATE vehicle_purchase_items
+    SET
+      status_code = 'sold',
+      sold_at = COALESCE(sold_at, NOW()),
+      sale_id = ?,
+      contact_vehicle_id = COALESCE(contact_vehicle_id, ?)
+    WHERE id = ?
+    `,
+    [saleId, contactVehicleId || null, id]
+  );
+}
+
+async function restoreStockItemToInStock(conn, stockItemId) {
+  const id = Number(stockItemId || 0);
+  if (!id) return;
+
+  await conn.query(
+    `
+    UPDATE vehicle_purchase_items
+    SET
+      status_code = 'in_stock',
+      sold_at = NULL,
+      sale_id = NULL
+    WHERE id = ?
+    `,
+    [id]
+  );
+}
+// =====================================================
 // Snapshot helpers (HSRP/RC column-safe)
 // =====================================================
 async function pickExistingColumn(conn, tableName, candidates) {
@@ -191,7 +280,7 @@ async function getBranchName(conn, branchId) {
 }
 
 // =====================================================
-// Insurance helpers (NEW)
+// Insurance helpers
 // =====================================================
 async function getExistingColumns(conn, tableName, candidates) {
   if (!candidates.length) return new Set();
@@ -208,29 +297,29 @@ async function getExistingColumns(conn, tableName, candidates) {
 
 async function upsertInsuranceFromSale(conn, saleId, payload, reqUserId, opts = {}) {
   const remarksSuffix = safeText(opts.remarksSuffix);
- const vehicleNo =
-  safeText(payload.vehicle_no) ||
-  safeText(payload.registration_number) ||
-  safeText(payload.registration_no) ||
-  "";
+  const vehicleNo =
+    safeText(payload.vehicle_no) ||
+    safeText(payload.registration_number) ||
+    safeText(payload.registration_no) ||
+    "";
 
- const baseData = {
-  sale_id: saleId,
-  chassis_number: payload.chassis_number || null,
-  engine_number: payload.engine_number || null,
-  customer_name: payload.customer_name || null,
-  vehicle_no: vehicleNo,
-  phone: payload.mobile_number || null,
-  insurance_type: "new",
-  company: payload.insurance_company || null,
-  policy_number: payload.insurance_number || null,
-  cpa_included: payload.cpa_applicable ? 1 : 0,
-  cpa_number: payload.cpa_insurance_number || null,
-  premium_amount: payload.premium_amount != null ? numOrZero(payload.premium_amount) : 0,
-  start_date: payload.sale_date || null,
-  invoice_number: payload.invoice_number || null,
-  remarks: remarksSuffix || "Auto synced from sale",
-};
+  const baseData = {
+    sale_id: saleId,
+    chassis_number: payload.chassis_number || null,
+    engine_number: payload.engine_number || null,
+    customer_name: payload.customer_name || null,
+    vehicle_no: vehicleNo,
+    phone: payload.mobile_number || null,
+    insurance_type: "new",
+    company: payload.insurance_company || null,
+    policy_number: payload.insurance_number || null,
+    cpa_included: payload.cpa_applicable ? 1 : 0,
+    cpa_number: payload.cpa_insurance_number || null,
+    premium_amount: payload.premium_amount != null ? numOrZero(payload.premium_amount) : 0,
+    start_date: payload.sale_date || null,
+    invoice_number: payload.invoice_number || null,
+    remarks: remarksSuffix || "Auto synced from sale",
+  };
 
   const hasEnoughData =
     baseData.customer_name ||
@@ -242,32 +331,32 @@ async function upsertInsuranceFromSale(conn, saleId, payload, reqUserId, opts = 
 
   if (!hasEnoughData) return;
 
-const insuranceCols = await getExistingColumns(conn, "insurance", [
-  "sale_id",
-  "chassis_number",
-  "engine_number",
-  "customer_name",
-  "vehicle_no",
-  "phone",
-  "insurance_type",
-  "company",
-  "policy_number",
-  "cpa_included",
-  "cpa_number",
-  "premium_amount",
-  "start_date",
-  "expiry_date",
-  "invoice_number",
-  "renewed_by",
-  "remarks",
-  "agent_name",
-  "agent",
-  "insurance_broker",
-  "broker",
-  "is_cancelled",
-  "cancelled_at",
-  "cancelled_by",
-]);
+  const insuranceCols = await getExistingColumns(conn, "insurance", [
+    "sale_id",
+    "chassis_number",
+    "engine_number",
+    "customer_name",
+    "vehicle_no",
+    "phone",
+    "insurance_type",
+    "company",
+    "policy_number",
+    "cpa_included",
+    "cpa_number",
+    "premium_amount",
+    "start_date",
+    "expiry_date",
+    "invoice_number",
+    "renewed_by",
+    "remarks",
+    "agent_name",
+    "agent",
+    "insurance_broker",
+    "broker",
+    "is_cancelled",
+    "cancelled_at",
+    "cancelled_by",
+  ]);
 
   const insertData = {};
 
@@ -306,7 +395,6 @@ const insuranceCols = await getExistingColumns(conn, "insurance", [
   }
 
   const updates = {};
-
   for (const [k, v] of Object.entries(insertData)) {
     if (k !== "sale_id") updates[k] = v;
   }
@@ -370,7 +458,7 @@ async function cancelLinkedInsurance(conn, saleId, reqUserId) {
 }
 
 // =====================================================
-// ✅ Branch + SOLD-lock validators (NEW)
+// Branch + SOLD-lock validators
 // =====================================================
 async function assertValidBranch(conn, branchId, { required = false } = {}) {
   const bid = branchId != null && String(branchId).trim() !== "" ? Number(branchId) : null;
@@ -430,6 +518,9 @@ async function assertVehicleNotSold(conn, vehicleId, saleIdToExclude) {
   }
 }
 
+// =====================================================
+// Snapshot builders
+// =====================================================
 async function buildSnapshotObject(conn, saleId) {
   const [sRows] = await conn.query(
     `SELECT s.*
@@ -631,7 +722,6 @@ async function createVersionedSaleSnapshot(conn, saleId, snapshotJson, reason, c
   );
 
   await conn.query(`UPDATE sales SET latest_snapshot_version = ? WHERE id = ?`, [nextVer, saleId]);
-
   return nextVer;
 }
 
@@ -645,7 +735,7 @@ async function refreshSnapshots(conn, saleId, reason, reqUserId) {
 }
 
 // =====================================================
-// ✅ Trace sales
+// Trace sales
 // =====================================================
 exports.traceSales = async (req, res) => {
   try {
@@ -708,7 +798,7 @@ exports.traceSales = async (req, res) => {
 };
 
 // =====================================================
-// ✅ List sales
+// List sales
 // =====================================================
 exports.getAllSales = async (req, res) => {
   try {
@@ -780,6 +870,7 @@ exports.getAllSales = async (req, res) => {
          s.engine_number,
          s.contact_id,
          s.contact_vehicle_id,
+        s.stock_item_id,
          s.branch_id,
          b.branch_name,
          s.created_at,
@@ -800,19 +891,30 @@ exports.getAllSales = async (req, res) => {
 };
 
 // =====================================================
-// ✅ Create Sale
+// Create Sale
 // =====================================================
 exports.createSale = async (req, res) => {
   try {
     const body = req.body || {};
 
     const contactId = body.contact_id ? Number(body.contact_id) : null;
-    const vehicleId = body.contact_vehicle_id ? Number(body.contact_vehicle_id) : null;
+    const vehicleId =
+      body.contact_vehicle_id != null && String(body.contact_vehicle_id).trim() !== ""
+        ? Number(body.contact_vehicle_id)
+        : null;
+    const stockItemId = body.stock_item_id ? Number(body.stock_item_id) : null;
 
-    if (!contactId || !vehicleId) {
+    if (!contactId) {
       return res.status(400).json({
         success: false,
-        message: "Select contact + vehicle first (hard rule).",
+        message: "Select contact first (hard rule).",
+      });
+    }
+
+    if (!stockItemId) {
+      return res.status(400).json({
+        success: false,
+        message: "stock_item_id is required. Please select a vehicle from live stock.",
       });
     }
 
@@ -821,7 +923,6 @@ exports.createSale = async (req, res) => {
       await conn.beginTransaction();
 
       const branchId = await assertValidBranch(conn, body.branch_id, { required: true });
-      await assertVehicleNotSold(conn, vehicleId, 0);
 
       const [cRows] = await conn.query(
         `SELECT id, first_name, last_name, full_name, address
@@ -835,48 +936,6 @@ exports.createSale = async (req, res) => {
         return res.status(400).json({ success: false, message: "Contact not found." });
       }
       const contact = cRows[0];
-
-      const [vRows] = await conn.query(
-        `SELECT cv.*,
-                vm.model_name,
-                vv.variant_name
-         FROM contact_vehicles cv
-         LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
-         LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
-         WHERE cv.id = ?
-         LIMIT 1`,
-        [vehicleId]
-      );
-
-const [stockRows] = await conn.query(
-  `
-  SELECT id, status_code, sale_id
-  FROM vehicle_purchase_items
-  WHERE contact_vehicle_id = ?
-  ORDER BY id DESC
-  LIMIT 1
-  FOR UPDATE
-  `,
-  [vehicleId]
-);
-
-if (stockRows.length) {
-  const stock = stockRows[0];
-
-  if (String(stock.status_code || "").toLowerCase() === "sold" && stock.sale_id) {
-    await conn.rollback();
-    return res.status(409).json({
-      success: false,
-      message: `Vehicle already sold in stock (Sale ID: ${stock.sale_id})`,
-    });
-  }
-}
-
-      if (!vRows.length) {
-        await conn.rollback();
-        return res.status(400).json({ success: false, message: "Vehicle not found." });
-      }
-      const vehicle = vRows[0];
 
       const [pRows] = await conn.query(
         `SELECT phone
@@ -892,34 +951,221 @@ if (stockRows.length) {
         contact.full_name ||
         [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim();
 
+      // lock + validate stock
+      const stock = await assertStockItemAssignable(conn, {
+        stockItemId,
+        contactVehicleId: vehicleId || null,
+        excludeSaleId: null,
+      });
+
+      let finalVehicleId = vehicleId || (stock.contact_vehicle_id ? Number(stock.contact_vehicle_id) : null);
+      let vehicle = null;
+
+      // -------------------------------------------------
+      // AUTO-LINK for unlinked picked stock
+      // -------------------------------------------------
+      if (!finalVehicleId) {
+        const modelId = stock.model_id ? Number(stock.model_id) : null;
+        const variantId = stock.variant_id ? Number(stock.variant_id) : null;
+
+        let modelName = null;
+        let variantName = null;
+
+        if (modelId) {
+          const [mRows] = await conn.query(
+            `SELECT model_name
+             FROM vehicle_models
+             WHERE id = ?
+             LIMIT 1`,
+            [modelId]
+          );
+          modelName = mRows?.[0]?.model_name || null;
+        }
+
+        if (variantId) {
+          const [vrRows] = await conn.query(
+            `SELECT variant_name
+             FROM vehicle_variants
+             WHERE id = ?
+             LIMIT 1`,
+            [variantId]
+          );
+          variantName = vrRows?.[0]?.variant_name || null;
+        }
+
+        const chassis = safeText(stock.chassis_number);
+        const engine = safeText(stock.engine_number);
+
+        // 1) Try to reuse existing vehicle by chassis first, then engine
+        let existingVehicle = null;
+
+        if (chassis) {
+          const [rowsByChassis] = await conn.query(
+            `
+            SELECT *
+            FROM contact_vehicles
+            WHERE chassis_number = ?
+            ORDER BY id DESC
+            LIMIT 1
+            FOR UPDATE
+            `,
+            [chassis]
+          );
+          existingVehicle = rowsByChassis?.[0] || null;
+        }
+
+        if (!existingVehicle && engine) {
+          const [rowsByEngine] = await conn.query(
+            `
+            SELECT *
+            FROM contact_vehicles
+            WHERE engine_number = ?
+            ORDER BY id DESC
+            LIMIT 1
+            FOR UPDATE
+            `,
+            [engine]
+          );
+          existingVehicle = rowsByEngine?.[0] || null;
+        }
+
+        if (existingVehicle) {
+          finalVehicleId = Number(existingVehicle.id);
+
+          // If unlinked, attach to selected contact
+          if (!existingVehicle.contact_id) {
+            await conn.query(
+              `
+              UPDATE contact_vehicles
+              SET contact_id = ?
+              WHERE id = ?
+              `,
+              [contactId, finalVehicleId]
+            );
+          }
+
+          // If already linked to another contact, block
+          if (
+            existingVehicle.contact_id &&
+            Number(existingVehicle.contact_id) !== Number(contactId)
+          ) {
+            const err = new Error("This vehicle is already linked to another customer");
+            err.statusCode = 409;
+            throw err;
+          }
+
+          // Ensure stock row points to reused vehicle
+          await conn.query(
+            `
+            UPDATE vehicle_purchase_items
+            SET contact_vehicle_id = ?
+            WHERE id = ?
+            `,
+            [finalVehicleId, stockItemId]
+          );
+        } else {
+          // 2) No existing vehicle found -> create new one
+          const autoVehiclePayload = {
+            contact_id: contactId,
+            model_id: modelId,
+            variant_id: variantId,
+            vehicle_make: safeText(body.vehicle_make) || "Hero",
+            vehicle_model:
+              safeText(body.vehicle_model) ||
+              safeText(variantName ? `${modelName || ""} ${variantName}`.trim() : modelName) ||
+              null,
+            color: safeText(stock.color),
+            chassis_number: chassis,
+            engine_number: engine,
+          };
+
+          const autoCols = Object.keys(autoVehiclePayload);
+          const autoVals = autoCols.map((k) => autoVehiclePayload[k]);
+
+          const [autoIns] = await conn.query(
+            `INSERT INTO contact_vehicles (${autoCols.join(",")})
+             VALUES (${autoCols.map(() => "?").join(",")})`,
+            autoVals
+          );
+
+          finalVehicleId = autoIns.insertId;
+
+          await conn.query(
+            `
+            UPDATE vehicle_purchase_items
+            SET contact_vehicle_id = ?
+            WHERE id = ?
+            `,
+            [finalVehicleId, stockItemId]
+          );
+        }
+      }
+
+      if (finalVehicleId) {
+        const [vRows] = await conn.query(
+          `SELECT cv.*,
+                  vm.model_name,
+                  vv.variant_name
+           FROM contact_vehicles cv
+           LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
+           LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
+           WHERE cv.id = ?
+           LIMIT 1`,
+          [finalVehicleId]
+        );
+        vehicle = vRows?.[0] || null;
+      }
+
+      if (finalVehicleId) {
+        await assertVehicleNotSold(conn, finalVehicleId, 0);
+      }
+
       const extra = normalizeSaleExtraFields(body);
 
       const payload = {
         contact_id: contactId,
-        contact_vehicle_id: vehicleId,
+        contact_vehicle_id: finalVehicleId || null,
+        stock_item_id: stockItemId,
         branch_id: branchId,
 
         customer_name: safeText(body.customer_name) || safeText(fullName),
         mobile_number: safeText(body.mobile_number) || safeText(primaryPhone),
         address: safeText(body.address) || safeText(contact.address),
 
-        vehicle_make: safeText(body.vehicle_make) || safeText(vehicle.make) || null,
+        vehicle_make:
+          safeText(body.vehicle_make) ||
+          safeText(vehicle?.make) ||
+          safeText(vehicle?.vehicle_make) ||
+          "Hero",
+
         vehicle_model:
           safeText(body.vehicle_model) ||
-          safeText(vehicle.variant_name ? `${vehicle.model_name} ${vehicle.variant_name}` : vehicle.model_name) ||
-          safeText(vehicle.model_name) ||
+          safeText(
+            vehicle?.variant_name
+              ? `${vehicle.model_name} ${vehicle.variant_name}`
+              : vehicle?.model_name
+          ) ||
+          safeText(vehicle?.model_name) ||
+          safeText(stock.model_name) ||
           null,
 
         vehicle_no:
           safeText(body.vehicle_no) ||
           safeText(body.registration_number) ||
           safeText(body.registration_no) ||
-          safeText(vehicle.vehicle_no) ||
-          safeText(vehicle.registration_number) ||
+          safeText(vehicle?.vehicle_no) ||
+          safeText(vehicle?.registration_number) ||
           null,
 
-        chassis_number: safeText(body.chassis_number) || safeText(vehicle.chassis_number),
-        engine_number: safeText(body.engine_number) || safeText(vehicle.engine_number),
+        chassis_number:
+          safeText(body.chassis_number) ||
+          safeText(vehicle?.chassis_number) ||
+          safeText(stock.chassis_number),
+
+        engine_number:
+          safeText(body.engine_number) ||
+          safeText(vehicle?.engine_number) ||
+          safeText(stock.engine_number),
 
         sale_date: toDateISO(body.sale_date) || toDateISO(new Date()),
         sale_price: body.sale_price != null ? numOrZero(body.sale_price) : 0,
@@ -957,23 +1203,16 @@ if (stockRows.length) {
 
       const saleId = ins.insertId;
 
-      await conn.query(
-        `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
-         VALUES (?,?,?)
-         ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
-        [saleId, vehicleId, contactId]
-      );
+      if (finalVehicleId) {
+        await conn.query(
+          `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
+           VALUES (?,?,?)
+           ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
+          [saleId, finalVehicleId, contactId]
+        );
+      }
 
-      await conn.query(
-  `
-  UPDATE vehicle_purchase_items
-  SET status_code = 'sold',
-      sold_at = NOW(),
-      sale_id = ?
-  WHERE contact_vehicle_id = ?
-  `,
-  [saleId, vehicleId]
-);
+      await markStockItemSold(conn, stockItemId, saleId, finalVehicleId || null);
 
       await conn.query(
         `INSERT INTO vahan (sale_id, insurance_done, hsrp_done, rc_done, rc_required, aadhaar_required)
@@ -991,7 +1230,6 @@ if (stockRows.length) {
         [saleId]
       );
 
-      // NEW: auto create insurance from sale data
       await upsertInsuranceFromSale(conn, saleId, payload, req.user?.id || null, {
         remarksSuffix: "Auto created from sale",
       });
@@ -1027,7 +1265,6 @@ if (stockRows.length) {
     return res.status(500).json({ success: false, message: err?.message || "Server error" });
   }
 };
-
 // =====================================================
 // GET /api/sales/:id
 // =====================================================
@@ -1089,16 +1326,22 @@ exports.updateSale = async (req, res) => {
         ? Number(body.contact_vehicle_id)
         : cur.contact_vehicle_id;
 
+    const newStockItemId =
+      body.stock_item_id != null && String(body.stock_item_id).trim() !== ""
+        ? Number(body.stock_item_id)
+        : cur.stock_item_id;
+
     const changingLink =
       (body.contact_id != null && newContactId !== cur.contact_id) ||
-      (body.contact_vehicle_id != null && newVehicleId !== cur.contact_vehicle_id);
+      (body.contact_vehicle_id != null && newVehicleId !== cur.contact_vehicle_id) ||
+      (body.stock_item_id != null && Number(newStockItemId || 0) !== Number(cur.stock_item_id || 0));
 
     if (changingLink) {
-      if (!newContactId || !newVehicleId) {
+      if (!newContactId || !newVehicleId || !newStockItemId) {
         await conn.rollback();
         return res.status(400).json({
           success: false,
-          message: "contact_id and contact_vehicle_id are required together",
+          message: "contact_id, contact_vehicle_id and stock_item_id are required together",
         });
       }
     }
@@ -1182,6 +1425,7 @@ exports.updateSale = async (req, res) => {
 
     const updates = {
       ...(hydrated ? { contact_id: hydrated.contact_id, contact_vehicle_id: hydrated.contact_vehicle_id } : {}),
+      stock_item_id: newStockItemId,
 
       father_name: extra.father_name,
       age: extra.age,
@@ -1193,7 +1437,7 @@ exports.updateSale = async (req, res) => {
       nominee_name: extra.nominee_name,
       nominee_relation: extra.nominee_relation,
 
-           vehicle_make: hydrated
+      vehicle_make: hydrated
         ? hydrated.vehicle_make
         : (safeText(body.vehicle_make) ?? cur.vehicle_make),
 
@@ -1208,6 +1452,7 @@ exports.updateSale = async (req, res) => {
       engine_number: hydrated
         ? hydrated.engine_number
         : (safeText(body.engine_number) ?? cur.engine_number),
+
       sale_date: toDateISO(body.sale_date) || toDateISO(cur.sale_date),
       sale_price: body.sale_price != null ? numOrZero(body.sale_price) : cur.sale_price,
       invoice_number: safeText(body.invoice_number),
@@ -1242,67 +1487,55 @@ exports.updateSale = async (req, res) => {
       branch_id: branchId,
     };
 
-    const cols = Object.keys(updates).filter((k) => k !== undefined);
-    const setSql = cols.map((c) => `${c} = ?`).join(", ");
-    const vals = cols.map((k) => updates[k]);
+const oldVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
+const oldStockItemId = cur.stock_item_id ? Number(cur.stock_item_id) : null;
 
-    await conn.query(`UPDATE sales SET ${setSql} WHERE id = ?`, [...vals, id]);
-
-   const oldVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
 const finalVehicleId = hydrated?.contact_vehicle_id
   ? Number(hydrated.contact_vehicle_id)
   : (cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null);
+
 const finalContactId = hydrated?.contact_id
   ? Number(hydrated.contact_id)
   : (cur.contact_id ? Number(cur.contact_id) : null);
 
-const vehicleChanged =
-  oldVehicleId &&
-  finalVehicleId &&
-  Number(oldVehicleId) !== Number(finalVehicleId);
+const finalStockItemId = newStockItemId ? Number(newStockItemId) : null;
 
-if (vehicleChanged) {
-  // 1) restore old vehicle stock
-  await conn.query(
-    `
-    UPDATE vehicle_purchase_items
-    SET status_code = 'in_stock',
-        sold_at = NULL,
-        sale_id = NULL
-    WHERE contact_vehicle_id = ?
-      AND sale_id = ?
-    `,
-    [oldVehicleId, id]
-  );
-
-  // 2) remove old sale-vehicle link
-  await conn.query(
-    `DELETE FROM sale_vehicle_links WHERE sale_id = ? AND vehicle_id = ?`,
-    [id, oldVehicleId]
-  );
+// ✅ validate stock BEFORE updating sales
+if (finalStockItemId) {
+  await assertStockItemAssignable(conn, {
+    stockItemId: finalStockItemId,
+    contactVehicleId: finalVehicleId,
+    excludeSaleId: id,
+  });
 }
 
-if (finalVehicleId && finalContactId) {
-  // 3) upsert new sale-vehicle link
-  await conn.query(
-    `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
-     VALUES (?,?,?)
-     ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
-    [id, finalVehicleId, finalContactId]
-  );
+const cols = Object.keys(updates).filter((k) => k !== undefined);
+const setSql = cols.map((c) => `${c} = ?`).join(", ");
+const vals = cols.map((k) => updates[k]);
 
-  // 4) mark new vehicle stock as sold
-  await conn.query(
-    `
-    UPDATE vehicle_purchase_items
-    SET status_code = 'sold',
-        sold_at = NOW(),
-        sale_id = ?
-    WHERE contact_vehicle_id = ?
-    `,
-    [id, finalVehicleId]
-  );
-}
+await conn.query(`UPDATE sales SET ${setSql} WHERE id = ?`, [...vals, id]);
+
+    if (oldStockItemId && (!finalStockItemId || Number(oldStockItemId) !== Number(finalStockItemId))) {
+      await restoreStockItemToInStock(conn, oldStockItemId);
+    }
+
+    if (oldVehicleId && finalVehicleId && Number(oldVehicleId) !== Number(finalVehicleId)) {
+      await conn.query(
+        `DELETE FROM sale_vehicle_links WHERE sale_id = ? AND vehicle_id = ?`,
+        [id, oldVehicleId]
+      );
+    }
+
+    if (finalVehicleId && finalContactId && finalStockItemId) {
+      await conn.query(
+        `INSERT INTO sale_vehicle_links (sale_id, vehicle_id, contact_id)
+         VALUES (?,?,?)
+         ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
+        [id, finalVehicleId, finalContactId]
+      );
+
+      await markStockItemSold(conn, finalStockItemId, id, finalVehicleId);
+    }
 
     await conn.query(
       `INSERT INTO vahan (sale_id, insurance_done, hsrp_done, rc_done, rc_required, aadhaar_required)
@@ -1313,28 +1546,27 @@ if (finalVehicleId && finalContactId) {
       [id, 0, 0, 0, updates.rc_required, updates.aadhaar_required]
     );
 
-    // NEW: sync insurance on sale edit
-   const insurancePayload = {
-  customer_name: updates.customer_name ?? cur.customer_name,
-  mobile_number: updates.mobile_number ?? cur.mobile_number,
-  vehicle_model: updates.vehicle_model ?? cur.vehicle_model,
-  vehicle_no:
-  hydrated?.vehicle_no ||
-  safeText(body.vehicle_no) ||
-  safeText(body.registration_number) ||
-  safeText(body.registration_no) ||
-  "",
-  chassis_number: updates.chassis_number ?? cur.chassis_number,
-  engine_number: updates.engine_number ?? cur.engine_number,
-  insurance_company: updates.insurance_company,
-  insurance_number: updates.insurance_number,
-  cpa_insurance_number: updates.cpa_insurance_number,
-  insurance_broker: updates.insurance_broker,
-  cpa_applicable: updates.cpa_applicable,
-  sale_date: updates.sale_date ?? toDateISO(cur.sale_date),
-  invoice_number: updates.invoice_number ?? cur.invoice_number,
-  premium_amount: body.premium_amount != null ? numOrZero(body.premium_amount) : 0,
-};
+    const insurancePayload = {
+      customer_name: updates.customer_name ?? cur.customer_name,
+      mobile_number: updates.mobile_number ?? cur.mobile_number,
+      vehicle_model: updates.vehicle_model ?? cur.vehicle_model,
+      vehicle_no:
+        hydrated?.vehicle_no ||
+        safeText(body.vehicle_no) ||
+        safeText(body.registration_number) ||
+        safeText(body.registration_no) ||
+        "",
+      chassis_number: updates.chassis_number ?? cur.chassis_number,
+      engine_number: updates.engine_number ?? cur.engine_number,
+      insurance_company: updates.insurance_company,
+      insurance_number: updates.insurance_number,
+      cpa_insurance_number: updates.cpa_insurance_number,
+      insurance_broker: updates.insurance_broker,
+      cpa_applicable: updates.cpa_applicable,
+      sale_date: updates.sale_date ?? toDateISO(cur.sale_date),
+      invoice_number: updates.invoice_number ?? cur.invoice_number,
+      premium_amount: body.premium_amount != null ? numOrZero(body.premium_amount) : 0,
+    };
 
     await upsertInsuranceFromSale(conn, id, insurancePayload, req.user?.id || null, {
       remarksSuffix: "Auto updated from sale edit",
@@ -1370,91 +1602,68 @@ if (finalVehicleId && finalContactId) {
 };
 
 // =====================================================
-// POST /api/sales/:id/cancel
+
 // =====================================================
 exports.cancelSale = async (req, res) => {
   const conn = await db.getConnection();
   try {
-    const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
-
     await conn.beginTransaction();
+
+    const saleId = Number(req.params.id);
+    if (!saleId) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "Invalid sale id" });
+    }
+
+    const [rows] = await conn.query(
+      `SELECT id, stock_item_id, is_cancelled
+       FROM sales
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [saleId]
+    );
+
+    if (!rows.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: "Sale not found" });
+    }
+
+    const sale = rows[0];
+
+    if (Number(sale.is_cancelled || 0) === 1) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "Sale already cancelled" });
+    }
+
+    if (sale.stock_item_id) {
+      await restoreStockItemToInStock(conn, sale.stock_item_id);
+    }
 
     await conn.query(
       `UPDATE sales
-       SET is_cancelled = 1, cancelled_at = NOW(), cancelled_by = ?
+       SET is_cancelled = 1
        WHERE id = ?`,
-      [req.user?.id || null, id]
+      [saleId]
     );
 
-    await conn.query(
-  `
-  UPDATE vehicle_purchase_items
-  SET status_code = 'in_stock',
-      sold_at = NULL,
-      sale_id = NULL
-  WHERE sale_id = ?
-  `,
-  [id]
-);
-
-    await cancelLinkedInsurance(conn, id, req.user?.id || null);
-    await refreshSnapshots(conn, id, "cancel", req.user?.id || null);
+    await cancelLinkedInsurance(conn, saleId, req.user?.id || null);
+    await refreshSnapshots(conn, saleId, "cancel", req.user?.id || null);
 
     await conn.commit();
-    return res.json({ success: true });
+
+    return res.json({ success: true, message: "Sale cancelled successfully" });
   } catch (err) {
     try {
       await conn.rollback();
     } catch {}
     console.error("cancelSale error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: err?.message || "Server error" });
   } finally {
     conn.release();
   }
 };
 
-// =====================================================
-// DELETE /api/sales/:id (hard delete)
-// =====================================================
-exports.deleteSale = async (req, res) => {
-  const conn = await db.getConnection();
-  try {
-    const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ success: false, message: "Invalid id" });
-
-    await conn.beginTransaction();
-
-    // restore stock first
-    await conn.query(
-      `
-      UPDATE vehicle_purchase_items
-      SET status_code = 'in_stock',
-          sold_at = NULL,
-          sale_id = NULL
-      WHERE sale_id = ?
-      `,
-      [id]
-    );
-
-    // optional cleanup of sale_vehicle_links
-    await conn.query(`DELETE FROM sale_vehicle_links WHERE sale_id = ?`, [id]);
-
-    // delete sale
-    await conn.query(`DELETE FROM sales WHERE id = ?`, [id]);
-
-    await conn.commit();
-    return res.json({ success: true });
-  } catch (err) {
-    try {
-      await conn.rollback();
-    } catch {}
-    console.error("deleteSale error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  } finally {
-    conn.release();
-  }
-};
 
 // =====================================================
 // Upload Sale Documents
@@ -1471,22 +1680,6 @@ exports.uploadSaleDocuments = [
       if (!files.length) return res.status(400).json({ success: false, message: "No files" });
 
       await conn.beginTransaction();
-
-      // lock selected vehicle row for this transaction
-const [lockedVehicleRows] = await conn.query(
-  `
-  SELECT id, chassis_number, engine_number
-  FROM contact_vehicles
-  WHERE id = ?
-  FOR UPDATE
-  `,
-  [vehicleId]
-);
-
-if (!lockedVehicleRows.length) {
-  await conn.rollback();
-  return res.status(400).json({ success: false, message: "Vehicle not found." });
-}
 
       const [rows] = await conn.query(
         `SELECT documents_json
@@ -1569,7 +1762,7 @@ exports.uploadOldSales = [
 ];
 
 // =====================================================
-// ✅ Printable Dealer Format (HTML)
+// Printable Dealer Format (HTML)
 // =====================================================
 exports.getSalePrintData = async (req, res) => {
   try {
@@ -1638,11 +1831,11 @@ exports.getSalePrintData = async (req, res) => {
         <tr><th>Father</th><td>${esc(c.father_name)}</td></tr>
         <tr><th>Age</th><td>${esc(c.age)}</td></tr>
         <tr><th>Nominee</th><td>${esc(c.nominee_name)} <span class="muted">(${esc(
-        c.nominee_relation
-      )})</span></td></tr>
+          c.nominee_relation
+        )})</span></td></tr>
         <tr><th>Aadhaar</th><td>${esc(c.aadhaar_required ? "Required" : "Not Required")} ${
-        c.aadhaar_number ? " - " + esc(c.aadhaar_number) : ""
-      }</td></tr>
+          c.aadhaar_number ? " - " + esc(c.aadhaar_number) : ""
+        }</td></tr>
       </table>
     </div>
 
@@ -1679,11 +1872,11 @@ exports.getSalePrintData = async (req, res) => {
       </tr>
       <tr>
         <th>HSRP</th><td>${esc(snap.hsrp.hsrp_number || "-")} <span class="muted">${
-        snap.hsrp.hsrp_order_no ? "(Order: " + esc(snap.hsrp.hsrp_order_no) + ")" : ""
-      }</span></td>
+          snap.hsrp.hsrp_order_no ? "(Order: " + esc(snap.hsrp.hsrp_order_no) + ")" : ""
+        }</span></td>
         <th>RC</th><td>${esc(snap.rc.rc_number || "-")} <span class="muted">${
-        snap.rc.rc_application_no ? "(App: " + esc(snap.rc.rc_application_no) + ")" : ""
-      }</span></td>
+          snap.rc.rc_application_no ? "(App: " + esc(snap.rc.rc_application_no) + ")" : ""
+        }</span></td>
       </tr>
       <tr>
         <th>Notes</th><td colspan="3">${esc(s.notes || "")}</td>
@@ -1711,7 +1904,7 @@ exports.getSalePrintData = async (req, res) => {
 };
 
 // =====================================================
-// ✅ Export Sales CSV
+// Export Sales CSV
 // =====================================================
 exports.exportSalesCSV = async (req, res) => {
   try {
@@ -1776,6 +1969,7 @@ exports.exportSalesCSV = async (req, res) => {
         s.chassis_number,
         s.engine_number,
         s.sale_price,
+        s.stock_item_id,
         s.is_cancelled
        FROM sales s
        LEFT JOIN showroom_branches b ON b.id = s.branch_id
@@ -1800,6 +1994,7 @@ exports.exportSalesCSV = async (req, res) => {
       "chassis_number",
       "engine_number",
       "sale_price",
+      "stock_item_id",
       "is_cancelled",
     ];
 
@@ -1824,6 +2019,7 @@ exports.exportSalesCSV = async (req, res) => {
         r.chassis_number,
         r.engine_number,
         r.sale_price,
+        r.stock_item_id,
         r.is_cancelled,
       ]
         .map(esc)
@@ -1834,5 +2030,159 @@ exports.exportSalesCSV = async (req, res) => {
   } catch (err) {
     console.error("exportSalesCSV error:", err);
     return res.status(500).json({ success: false, message: "Export failed" });
+  }
+};
+
+exports.deleteSale = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const saleId = req.params.id;
+
+    const [rows] = await conn.query(
+      `SELECT stock_item_id FROM sales WHERE id = ? FOR UPDATE`,
+      [saleId]
+    );
+
+    if (!rows.length) {
+      throw new Error("Sale not found");
+    }
+
+    const stockItemId = rows[0].stock_item_id;
+
+    // 🔁 Restore stock
+    if (stockItemId) {
+  await restoreStockItemToInStock(conn, stockItemId);
+}
+
+    // 🗑️ Delete sale
+    await conn.query(`DELETE FROM sales WHERE id = ?`, [saleId]);
+
+    await conn.commit();
+
+    res.json({ success: true });
+  } catch (err) {
+    await conn.rollback();
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.getAvailableStock = async (req, res) => {
+  try {
+    const contactId = Number(req.query.contact_id || 0);
+    const q = String(req.query.q || "").trim();
+    const includeSold =
+      Number(req.query.include_sold || 0) === 1 ||
+      String(req.query.include_sold || "").toLowerCase() === "true";
+
+    if (!contactId) {
+      return res.status(400).json({
+        success: false,
+        message: "contact_id is required",
+      });
+    }
+
+    const params = [contactId];
+    const where = [];
+
+    // ✅ IMPORTANT:
+    // show only:
+    // 1) linked to selected contact
+    // 2) unlinked
+    // hide stock linked to some other contact
+    where.push(`(cv.id IS NULL OR cv.contact_id = ?)`);
+
+    if (q) {
+      where.push(`
+        (
+          COALESCE(cv.vehicle_model, vm.model_name, '') LIKE ?
+          OR COALESCE(vm.model_name, '') LIKE ?
+          OR COALESCE(vv.variant_name, '') LIKE ?
+          OR COALESCE(vpi.chassis_number, cv.chassis_number, '') LIKE ?
+          OR COALESCE(vpi.engine_number, cv.engine_number, '') LIKE ?
+          OR CAST(vpi.id AS CHAR) LIKE ?
+        )
+      `);
+      const like = `%${q}%`;
+      params.push(like, like, like, like, like, like);
+    }
+
+    // default: only available rows
+    if (!includeSold) {
+      where.push(`LOWER(COALESCE(vpi.status_code, '')) = 'in_stock'`);
+      where.push(`vpi.sale_id IS NULL`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        COALESCE(cv.id, 0) AS id,
+        cv.id AS contact_vehicle_id,
+        cv.contact_id,
+
+        vpi.id AS stock_item_id,
+
+        COALESCE(cv.vehicle_make, 'HERO') AS vehicle_make,
+        COALESCE(cv.vehicle_model, vm.model_name, '') AS vehicle_model,
+        vm.model_name AS model_name,
+        COALESCE(vv.variant_name, '') AS variant_name,
+
+        COALESCE(vpi.chassis_number, cv.chassis_number, '') AS chassis_number,
+        COALESCE(vpi.engine_number, cv.engine_number, '') AS engine_number,
+        COALESCE(vpi.color, cv.color, '') AS color,
+
+        vpi.status_code AS stock_status,
+        CASE
+          WHEN LOWER(COALESCE(vpi.status_code, '')) = 'sold' OR vpi.sale_id IS NOT NULL THEN 1
+          ELSE 0
+        END AS is_sold,
+        vpi.sale_id AS sold_sale_id,
+
+        CASE
+          WHEN cv.id IS NULL THEN 0
+          ELSE 1
+        END AS is_linked,
+
+        CASE
+          WHEN cv.contact_id = ? THEN 1
+          ELSE 0
+        END AS is_selected_contact_vehicle
+
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN contact_vehicles cv
+        ON cv.id = vpi.contact_vehicle_id
+      LEFT JOIN vehicle_models vm
+        ON vm.id = COALESCE(vpi.model_id, cv.model_id)
+      LEFT JOIN vehicle_variants vv
+        ON vv.id = COALESCE(vpi.variant_id, cv.variant_id)
+
+      ${whereSql}
+
+      ORDER BY
+        is_selected_contact_vehicle DESC,
+        CASE WHEN cv.id IS NULL THEN 0 ELSE 1 END ASC,
+        CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'in_stock' AND vpi.sale_id IS NULL THEN 0 ELSE 1 END ASC,
+        vpi.id DESC
+
+      LIMIT 300
+      `,
+      [contactId, ...params]
+    );
+
+    return res.json({
+      success: true,
+      data: rows || [],
+    });
+  } catch (err) {
+    console.error("getAvailableStock error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Server error",
+    });
   }
 };

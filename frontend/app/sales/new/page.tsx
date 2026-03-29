@@ -34,7 +34,25 @@ type VehicleRow = {
   color: string | null;
   model_name: string | null;
   variant_name: string | null;
+  stock_item_id?: number | null;
+  stock_status?: string | null;
+  is_sold?: number | null;
+  sold_sale_id?: number | null;
+  is_linked?: number | null;
+};
 
+type StockApiRow = {
+  stock_item_id: number;
+  contact_vehicle_id?: number | null;
+  contact_id?: number | null;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  model_name?: string | null;
+  variant_name?: string | null;
+  color?: string | null;
+  chassis_number?: string | null;
+  engine_number?: string | null;
+  stock_status?: string | null;
   is_sold?: number | null;
   sold_sale_id?: number | null;
 };
@@ -80,6 +98,7 @@ function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
     />
   );
 }
+
 function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
@@ -140,29 +159,29 @@ export default function NewSalePage() {
   const [ddNomineeRelations, setDdNomineeRelations] = useState<DropdownItem[]>([]);
 
   const loadDropdowns = async () => {
-  try {
-    const res = await api.get("/api/dropdowns", {
-      params: {
-        types: "insurance_company,insurance_broker,finance_company,tyre,helmet,nominee_relation",
-      },
-    });
+    try {
+      const res = await api.get("/api/dropdowns", {
+        params: {
+          types: "insurance_company,insurance_broker,finance_company,tyre,helmet,nominee_relation",
+        },
+      });
 
-    const data = res.data?.data || {};
-    setDdInsuranceCompanies(data.insurance_company || []);
-    setDdInsuranceBrokers(data.insurance_broker || []);
-    setDdFinanceCompanies(data.finance_company || []);
-    setDdTyres(data.tyre || []);
-    setDdHelmets(data.helmet || []);
-    setDdNomineeRelations(data.nominee_relation || []);
-  } catch {
-    setDdInsuranceCompanies([]);
-    setDdInsuranceBrokers([]);
-    setDdFinanceCompanies([]);
-    setDdTyres([]);
-    setDdHelmets([]);
-    setDdNomineeRelations([]);
-  }
-};
+      const data = res.data?.data || {};
+      setDdInsuranceCompanies(data.insurance_company || []);
+      setDdInsuranceBrokers(data.insurance_broker || []);
+      setDdFinanceCompanies(data.finance_company || []);
+      setDdTyres(data.tyre || []);
+      setDdHelmets(data.helmet || []);
+      setDdNomineeRelations(data.nominee_relation || []);
+    } catch {
+      setDdInsuranceCompanies([]);
+      setDdInsuranceBrokers([]);
+      setDdFinanceCompanies([]);
+      setDdTyres([]);
+      setDdHelmets([]);
+      setDdNomineeRelations([]);
+    }
+  };
 
   useEffect(() => {
     loadBranches();
@@ -251,7 +270,6 @@ export default function NewSalePage() {
 
   useEffect(() => {
     fetchContacts(dcq.trim(), contactPage, contactPageSize).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dcq, contactPage, contactPageSize]);
 
   const loadContact = async (id: number) => {
@@ -279,40 +297,79 @@ export default function NewSalePage() {
 
   const [vq, setVq] = useState("");
   const dvq = useDebounced(vq, 250);
-  const [includeUnlinked, setIncludeUnlinked] = useState(true);
+
   const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
   const [vehicleLoading, setVehicleLoading] = useState(false);
-  const [vehiclePage, setVehiclePage] = useState(1);
-  const [vehiclePageSize, setVehiclePageSize] = useState(20);
-  const [vehicleTotal, setVehicleTotal] = useState<number | null>(null);
 
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleRow | null>(null);
   const [vehiclePicked, setVehiclePicked] = useState(false);
 
-  const fetchVehicles = async (q: string, page: number, pageSize: number) => {
-    if (!contactId) return;
+  const [searchAllVehicles, setSearchAllVehicles] = useState(true);
+
+  const normalizeVehicleRow = (r: StockApiRow): VehicleRow => {
+    const isSold =
+      Number(r.is_sold || 0) === 1 ||
+      String(r.stock_status || "").toLowerCase() === "sold";
+
+    return {
+      id: Number(r.contact_vehicle_id || r.stock_item_id || 0),
+      contact_id: r.contact_id ?? null,
+      chassis_number: r.chassis_number || "",
+      engine_number: r.engine_number || "",
+      vehicle_make: r.vehicle_make || "Hero",
+      vehicle_model: r.vehicle_model || r.model_name || null,
+      color: r.color || null,
+      model_name: r.model_name || r.vehicle_model || null,
+      variant_name: r.variant_name || null,
+      stock_item_id: r.stock_item_id ?? null,
+      stock_status: r.stock_status || (isSold ? "sold" : "in_stock"),
+      is_sold: isSold ? 1 : 0,
+      sold_sale_id: r.sold_sale_id ?? null,
+      is_linked: r.contact_vehicle_id ? 1 : 0,
+    };
+  };
+
+  const fetchVehicles = async (q: string) => {
+    if (!contactId) {
+      setVehicles([]);
+      return;
+    }
 
     setVehicleLoading(true);
+    setErr("");
+
     try {
-      const params: any = { q, page, pageSize };
-      if (!includeUnlinked || !q.trim()) params.contact_id = contactId;
-      const res = await api.get("/api/vehicles", { params });
-      setVehicles(res.data?.data || []);
-      setVehicleTotal(typeof res.data?.total === "number" ? res.data.total : null);
+      const params: Record<string, any> = {
+        q: q || "",
+        contact_id: contactId,
+        include_sold: searchAllVehicles ? 1 : 0,
+      };
+
+      const res = await api.get("/api/sales/available-stock", { params });
+
+      const rows: StockApiRow[] = Array.isArray(res.data)
+        ? res.data
+        : res.data?.data || [];
+
+      setVehicles((rows || []).map(normalizeVehicleRow));
+    } catch (e: any) {
+      console.error("fetchVehicles error:", e);
+      setVehicles([]);
+      setErr(e?.response?.data?.message || "Failed to load vehicles");
     } finally {
       setVehicleLoading(false);
     }
   };
 
   useEffect(() => {
-    setVehiclePage(1);
-  }, [dvq, includeUnlinked, contactId]);
-
-  useEffect(() => {
-    if (!contactId) return;
-    fetchVehicles(dvq.trim(), vehiclePage, vehiclePageSize).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dvq, vehiclePage, vehiclePageSize, includeUnlinked, contactId]);
+    if (!contactId) {
+      setVehicles([]);
+      return;
+    }
+    fetchVehicles(dvq.trim()).catch(() => {
+      setVehicles([]);
+    });
+  }, [dvq, contactId, searchAllVehicles]);
 
   const [history, setHistory] = useState<SalesTraceRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -320,9 +377,12 @@ export default function NewSalePage() {
   const pickVehicle = async (v: VehicleRow) => {
     setErr("");
 
-    const sold = Number(v.is_sold || 0) === 1;
-    if (sold) {
-      setErr(`This vehicle is already SOLD${v.sold_sale_id ? ` (#${v.sold_sale_id})` : ""}.`);
+    const isSold =
+      Number(v.is_sold || 0) === 1 ||
+      String(v.stock_status || "").toLowerCase() === "sold";
+
+    if (!v.stock_item_id || isSold) {
+      setErr("Only available stock vehicles can be selected.");
       return;
     }
 
@@ -388,8 +448,7 @@ export default function NewSalePage() {
     setCustomerName(contactFullName);
     setMobileNumber(primaryPhone);
     setAddress(contact.address || "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contactPicked, contactId, contact?.id]);
+  }, [contactPicked, contactId, contact?.id, contactFullName, primaryPhone, contact]);
 
   const pickedModel = selectedVehicle?.model_name || selectedVehicle?.vehicle_model || "";
   const pickedVariant = selectedVehicle?.variant_name || "";
@@ -435,16 +494,20 @@ export default function NewSalePage() {
 
     setVq("");
     setVehicles([]);
-    setVehiclePage(1);
+    setErr("");
   };
 
   const clearVehicle = () => {
     setSelectedVehicle(null);
     setVehiclePicked(false);
     setHistory([]);
+    setErr("");
   };
 
-  const canSave = !!contactId && !!selectedVehicle?.id && branchId !== "";
+  const canSave =
+    !!contactId &&
+    !!selectedVehicle?.stock_item_id &&
+    branchId !== "";
 
   const createSale = async () => {
     setErr("");
@@ -453,12 +516,17 @@ export default function NewSalePage() {
       setErr("Branch is required.");
       return;
     }
-    if (!contactId || !selectedVehicle?.id) {
+    if (!contactId || !selectedVehicle?.stock_item_id) {
       setErr("Select Contact + Vehicle first (hard rule).");
       return;
     }
-    if (Number(selectedVehicle.is_sold || 0) === 1) {
-      setErr(`This vehicle is already SOLD${selectedVehicle.sold_sale_id ? ` (#${selectedVehicle.sold_sale_id})` : ""}.`);
+
+    const isSold =
+      Number(selectedVehicle.is_sold || 0) === 1 ||
+      String(selectedVehicle.stock_status || "").toLowerCase() === "sold";
+
+    if (isSold) {
+      setErr("Selected vehicle is already sold. Please choose an available vehicle.");
       return;
     }
 
@@ -485,7 +553,8 @@ export default function NewSalePage() {
         branch_id: Number(branchId),
 
         contact_id: contactId,
-        contact_vehicle_id: selectedVehicle.id,
+        contact_vehicle_id: selectedVehicle.is_linked ? selectedVehicle.id : null,
+        stock_item_id: Number(selectedVehicle.stock_item_id),
 
         customer_name: customerName.trim(),
         mobile_number: mobileNumber.trim(),
@@ -549,7 +618,6 @@ export default function NewSalePage() {
   };
 
   const contactTotalPages = contactTotal ? Math.max(1, Math.ceil(contactTotal / contactPageSize)) : null;
-  const vehicleTotalPages = vehicleTotal ? Math.max(1, Math.ceil(vehicleTotal / vehiclePageSize)) : null;
 
   const lockedVehicleMake = selectedVehicle?.vehicle_make || "Hero";
   const lockedVehicleModel = vehicleLabel || "";
@@ -558,8 +626,8 @@ export default function NewSalePage() {
 
   return (
     <AuthGuard>
-      <div className="p-6">
-        <div className="max-w-6xl mx-auto">
+      <div className="p-4 lg:p-6 overflow-x-hidden">
+        <div className="max-w-[1280px] mx-auto w-full">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <h1 className="text-2xl font-bold">New Sale</h1>
@@ -665,14 +733,14 @@ export default function NewSalePage() {
                   <TextInput value={cq} onChange={(e) => setCq(e.target.value)} placeholder="Search customer..." />
                 </div>
 
-                <div className="mt-3 overflow-auto border rounded-xl">
-                  <table className="min-w-[800px] w-full text-sm">
+                <div className="mt-3 border rounded-xl overflow-hidden">
+                  <table className="w-full table-fixed text-sm">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="p-3 text-left">ID</th>
+                        <th className="p-3 text-left w-[80px]">ID</th>
                         <th className="p-3 text-left">Name</th>
-                        <th className="p-3 text-left">Mobile</th>
-                        <th className="p-3 text-right">Action</th>
+                        <th className="p-3 text-left w-[180px]">Mobile</th>
+                        <th className="p-3 text-right w-[110px]">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -691,9 +759,9 @@ export default function NewSalePage() {
                       ) : (
                         contacts.map((c) => (
                           <tr key={c.id} className="border-t hover:bg-gray-50">
-                            <td className="p-3 text-gray-600">{c.id}</td>
-                            <td className="p-3 font-medium">{c.full_name || "-"}</td>
-                            <td className="p-3">{c.primary_phone || "-"}</td>
+                            <td className="p-3 text-gray-600 break-words">{c.id}</td>
+                            <td className="p-3 font-medium break-words">{c.full_name || "-"}</td>
+                            <td className="p-3 break-words">{c.primary_phone || "-"}</td>
                             <td className="p-3 text-right">
                               <button
                                 className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50"
@@ -706,6 +774,8 @@ export default function NewSalePage() {
                                   setSelectedVehicle(null);
                                   setVehiclePicked(false);
                                   setHistory([]);
+                                  setVq("");
+                                  setErr("");
                                 }}
                               >
                                 Select
@@ -752,147 +822,119 @@ export default function NewSalePage() {
           </div>
 
           <div className="mt-6 border rounded-xl bg-white p-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
                 <div className="font-semibold">2) Select Vehicle</div>
                 <div className="text-xs text-gray-500">Search by engine/chassis/model</div>
               </div>
 
-              {vehiclePicked ? (
-                <button onClick={clearVehicle} className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50" type="button">
-                  Change Vehicle
-                </button>
-              ) : (
-                <div className="flex items-center gap-3 text-sm">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={includeUnlinked} onChange={(e) => setIncludeUnlinked(e.target.checked)} />
-                    Search all vehicles
-                  </label>
-                  <span className="text-gray-600">Page size</span>
-                  <select
-                    value={vehiclePageSize}
-                    onChange={(e) => {
-                      setVehiclePageSize(Number(e.target.value));
-                      setVehiclePage(1);
-                    }}
-                    className="px-2 py-2 border rounded-lg"
-                  >
-                    {[10, 20, 50, 100].map((n) => (
-                      <option key={n} value={n}>
-                        {n}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={searchAllVehicles}
+                  onChange={(e) => setSearchAllVehicles(e.target.checked)}
+                />
+                Search all vehicles
+              </label>
             </div>
 
             {!contactId ? (
               <div className="mt-2 text-sm text-amber-700">Select a customer first.</div>
             ) : vehiclePicked && selectedVehicle ? (
               <div className="mt-3 p-3 rounded-lg border bg-blue-50 border-blue-200 text-sm">
-                Selected: <b>{vehicleLabel || "Vehicle"}</b> • Chassis:{" "}
-                <b className="font-mono">{selectedVehicle.chassis_number}</b> • Engine:{" "}
-                <b className="font-mono">{selectedVehicle.engine_number}</b>
+                Selected: <b>{vehicleLabel || "Vehicle"}</b> • Stock ID:{" "}
+                <b className="font-mono">{selectedVehicle.stock_item_id}</b> • Chassis:{" "}
+                <b className="font-mono break-all">{selectedVehicle.chassis_number}</b> • Engine:{" "}
+                <b className="font-mono break-all">{selectedVehicle.engine_number}</b>
               </div>
             ) : (
               <>
                 <div className="mt-3">
-                  <TextInput value={vq} onChange={(e) => setVq(e.target.value)} placeholder="Search vehicle..." />
+                  <TextInput
+                    value={vq}
+                    onChange={(e) => setVq(e.target.value)}
+                    placeholder="Search vehicle..."
+                  />
                 </div>
+<div className="mt-3 border rounded-xl overflow-hidden">
+  <table className="w-full text-sm">
+    <thead className="bg-gray-50">
+      <tr>
+        <th className="p-3 text-left">Stock ID</th>
+        <th className="p-3 text-left">Model</th>
+        <th className="p-3 text-left">Variant</th>
+        <th className="p-3 text-left">Chassis</th>
+        <th className="p-3 text-left">Engine</th>
+        <th className="p-3 text-left">Link</th>
+        <th className="p-3 text-left">Status</th>
+        <th className="p-3 text-right">Pick</th>
+      </tr>
+    </thead>
+    <tbody>
+      {vehicleLoading ? (
+        <tr>
+          <td colSpan={8} className="p-4 text-gray-500">
+            Loading...
+          </td>
+        </tr>
+      ) : vehicles.length === 0 ? (
+        <tr>
+          <td colSpan={8} className="p-4 text-gray-500">
+            No vehicles found.
+          </td>
+        </tr>
+      ) : (
+        vehicles.map((v) => {
+          const isSold =
+            Number(v.is_sold || 0) === 1 ||
+            String(v.stock_status || "").toLowerCase() === "sold";
 
-                <div className="mt-3 overflow-auto border rounded-xl">
-                  <table className="min-w-[980px] w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="p-3 text-left">Model</th>
-                        <th className="p-3 text-left">Variant</th>
-                        <th className="p-3 text-left">Chassis</th>
-                        <th className="p-3 text-left">Engine</th>
-                        <th className="p-3 text-left">Status</th>
-                        <th className="p-3 text-right">Pick</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {vehicleLoading ? (
-                        <tr>
-                          <td colSpan={6} className="p-4 text-gray-500">
-                            Loading...
-                          </td>
-                        </tr>
-                      ) : vehicles.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="p-4 text-gray-500">
-                            No vehicles found.
-                          </td>
-                        </tr>
-                      ) : (
-                        vehicles.map((v) => {
-                          const sold = Number(v.is_sold || 0) === 1;
-                          return (
-                            <tr key={v.id} className="border-t hover:bg-gray-50">
-                              <td className="p-3">{v.model_name || v.vehicle_model || "-"}</td>
-                              <td className="p-3">{v.variant_name || "-"}</td>
-                              <td className="p-3 font-mono">{v.chassis_number}</td>
-                              <td className="p-3 font-mono">{v.engine_number}</td>
-                              <td className="p-3">
-                                {sold ? (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">
-                                    SOLD {v.sold_sale_id ? `(#${v.sold_sale_id})` : ""}
-                                  </span>
-                                ) : (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">
-                                    Available
-                                  </span>
-                                )}
-                              </td>
-                              <td className="p-3 text-right">
-                                <button
-                                  className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
-                                  type="button"
-                                  disabled={sold}
-                                  onClick={() => pickVehicle(v)}
-                                >
-                                  Pick
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="mt-3 flex items-center justify-between gap-2 text-sm">
-                  <div className="text-gray-600">
-                    Page <b>{vehiclePage}</b>
-                    {vehicleTotalPages ? (
-                      <>
-                        {" "}
-                        of <b>{vehicleTotalPages}</b>
-                      </>
-                    ) : null}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50"
-                      disabled={vehiclePage <= 1}
-                      type="button"
-                      onClick={() => setVehiclePage((p) => Math.max(1, p - 1))}
-                    >
-                      Prev
-                    </button>
-                    <button
-                      className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-50"
-                      disabled={vehicleTotalPages ? vehiclePage >= vehicleTotalPages : vehicles.length < vehiclePageSize}
-                      type="button"
-                      onClick={() => setVehiclePage((p) => p + 1)}
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
+          return (
+            <tr key={`${v.stock_item_id}-${v.id}`} className="border-t hover:bg-gray-50">
+              <td className="p-3 font-mono whitespace-nowrap">{v.stock_item_id || "-"}</td>
+              <td className="p-3">{v.model_name || v.vehicle_model || "-"}</td>
+              <td className="p-3">{v.variant_name || "-"}</td>
+              <td className="p-3 font-mono break-all">{v.chassis_number}</td>
+              <td className="p-3 font-mono break-all">{v.engine_number}</td>
+              <td className="p-3 whitespace-nowrap">
+                {v.is_linked ? (
+                  <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                    Linked
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                    Unlinked
+                  </span>
+                )}
+              </td>
+              <td className="p-3 whitespace-nowrap">
+                {isSold ? (
+                  <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">
+                    SOLD{v.sold_sale_id ? ` (#${v.sold_sale_id})` : ""}
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">
+                    Available
+                  </span>
+                )}
+              </td>
+              <td className="p-3 text-right whitespace-nowrap">
+                <button
+                  className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
+                  type="button"
+                  disabled={isSold || !v.stock_item_id}
+                  onClick={() => pickVehicle(v)}
+                >
+                  Pick
+                </button>
+              </td>
+            </tr>
+          );
+        })
+      )}
+    </tbody>
+  </table>
+</div>
               </>
             )}
           </div>
@@ -901,7 +943,7 @@ export default function NewSalePage() {
             <div className="mt-6 border rounded-xl bg-white p-4">
               <div className="font-semibold">3) Sale Details</div>
               <div className="text-xs text-gray-500 mt-1">
-                Customer + Vehicle fields are locked. To change them, use Contacts/Vehicles screens.
+                Customer is locked. Vehicle picked from stock. Unlinked vehicles are allowed.
               </div>
 
               <div className="mt-3 grid md:grid-cols-3 gap-4">
@@ -952,7 +994,11 @@ export default function NewSalePage() {
                 </Field>
 
                 <Field label="Sale Price">
-                  <TextInput type="number" value={String(salePrice)} onChange={(e) => setSalePrice(Number(e.target.value || 0))} />
+                  <TextInput
+                    type="number"
+                    value={String(salePrice)}
+                    onChange={(e) => setSalePrice(Number(e.target.value || 0))}
+                  />
                 </Field>
 
                 <Field label="Father Name *">
@@ -967,18 +1013,22 @@ export default function NewSalePage() {
                   <TextInput value={nomineeName} onChange={(e) => setNomineeName(e.target.value)} />
                 </Field>
 
-               <Field label="Nominee Relation">
-  <DropdownOrInput
-    value={nomineeRelation}
-    onChange={setNomineeRelation}
-    options={ddNomineeRelations}
-    placeholder="Enter nominee relation..."
-    typeKey="nominee_relation"
-  />
-</Field>
+                <Field label="Nominee Relation">
+                  <DropdownOrInput
+                    value={nomineeRelation}
+                    onChange={setNomineeRelation}
+                    options={ddNomineeRelations}
+                    placeholder="Enter nominee relation..."
+                    typeKey="nominee_relation"
+                  />
+                </Field>
 
                 <Field label="Payment Type *">
-                  <select value={paymentType} onChange={(e) => setPaymentType(e.target.value as any)} className="w-full px-3 py-2 border rounded-lg bg-white">
+                  <select
+                    value={paymentType}
+                    onChange={(e) => setPaymentType(e.target.value as any)}
+                    className="w-full px-3 py-2 border rounded-lg bg-white"
+                  >
                     <option value="cash">Cash</option>
                     <option value="finance">Finance</option>
                   </select>
@@ -986,7 +1036,13 @@ export default function NewSalePage() {
 
                 {paymentType === "finance" && (
                   <Field label="Finance Company *">
-                    <DropdownOrInput value={financeCompany} onChange={setFinanceCompany} options={ddFinanceCompanies} placeholder="Enter finance company..." typeKey="finance_company" />
+                    <DropdownOrInput
+                      value={financeCompany}
+                      onChange={setFinanceCompany}
+                      options={ddFinanceCompanies}
+                      placeholder="Enter finance company..."
+                      typeKey="finance_company"
+                    />
                   </Field>
                 )}
 
@@ -995,19 +1051,37 @@ export default function NewSalePage() {
                 </Field>
 
                 <Field label="Insurance Company *">
-                  <DropdownOrInput value={insuranceCompany} onChange={setInsuranceCompany} options={ddInsuranceCompanies} placeholder="Enter insurance company..." typeKey="insurance_company" />
+                  <DropdownOrInput
+                    value={insuranceCompany}
+                    onChange={setInsuranceCompany}
+                    options={ddInsuranceCompanies}
+                    placeholder="Enter insurance company..."
+                    typeKey="insurance_company"
+                  />
                 </Field>
 
                 <Field label="Insurance Broker *">
-                  <DropdownOrInput value={insuranceBroker} onChange={setInsuranceBroker} options={ddInsuranceBrokers} placeholder="Enter insurance broker..." typeKey="insurance_broker" />
+                  <DropdownOrInput
+                    value={insuranceBroker}
+                    onChange={setInsuranceBroker}
+                    options={ddInsuranceBrokers}
+                    placeholder="Enter insurance broker..."
+                    typeKey="insurance_broker"
+                  />
                 </Field>
 
                 <Field label="CPA">
-                  <select value={cpaIncluded} onChange={(e) => setCpaIncluded(e.target.value as any)} className="w-full px-3 py-2 border rounded-lg bg-white">
+                  <select
+                    value={cpaIncluded}
+                    onChange={(e) => setCpaIncluded(e.target.value as any)}
+                    className="w-full px-3 py-2 border rounded-lg bg-white"
+                  >
                     <option value="included">Included</option>
                     <option value="not_included">Not Included</option>
                   </select>
-                  <div className="text-xs text-gray-500 mt-1">If Not Included → CPA Insurance Number will appear.</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    If Not Included → CPA Insurance Number will appear.
+                  </div>
                 </Field>
 
                 {cpaIncluded === "not_included" && (
@@ -1064,15 +1138,15 @@ export default function NewSalePage() {
                 ) : history.length === 0 ? (
                   <div className="text-sm text-gray-500 mt-2">No previous sales found.</div>
                 ) : (
-                  <div className="mt-3 overflow-auto border rounded-xl">
-                    <table className="min-w-[900px] w-full text-sm">
+                  <div className="mt-3 border rounded-xl overflow-hidden">
+                    <table className="w-full table-fixed text-sm">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="p-3 text-left">Sale ID</th>
+                          <th className="p-3 text-left w-[90px]">Sale ID</th>
                           <th className="p-3 text-left">Customer</th>
-                          <th className="p-3 text-left">Date</th>
-                          <th className="p-3 text-left">Invoice</th>
-                          <th className="p-3 text-left">Status</th>
+                          <th className="p-3 text-left w-[120px]">Date</th>
+                          <th className="p-3 text-left w-[160px]">Invoice</th>
+                          <th className="p-3 text-left w-[110px]">Status</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1083,9 +1157,9 @@ export default function NewSalePage() {
                                 #{r.id}
                               </Link>
                             </td>
-                            <td className="p-3">{r.customer_name}</td>
+                            <td className="p-3 break-words">{r.customer_name}</td>
                             <td className="p-3">{String(r.sale_date).slice(0, 10)}</td>
-                            <td className="p-3">{r.invoice_number || "—"}</td>
+                            <td className="p-3 break-words">{r.invoice_number || "—"}</td>
                             <td className="p-3">{r.is_cancelled ? "Cancelled" : "Active"}</td>
                           </tr>
                         ))}
