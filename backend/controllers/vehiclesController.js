@@ -116,14 +116,29 @@ exports.listSearch = async (req, res) => {
       FROM contact_vehicles cv
       LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
       LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
-
-      -- ✅ sold lookup (no duplicates)
       LEFT JOIN (
-        SELECT contact_vehicle_id, MIN(id) AS sale_id
+        SELECT x.*
+        FROM vehicle_purchase_items x
+        INNER JOIN (
+          SELECT contact_vehicle_id, MAX(id) AS max_id
+          FROM vehicle_purchase_items
+          WHERE contact_vehicle_id IS NOT NULL
+          GROUP BY contact_vehicle_id
+        ) latest
+          ON latest.max_id = x.id
+      ) stock ON stock.contact_vehicle_id = cv.id
+
+      -- ✅ sold lookup (prefer strict stock link when available)
+      LEFT JOIN (
+        SELECT stock_item_id, contact_vehicle_id, MIN(id) AS sale_id
         FROM sales
-        WHERE is_cancelled = 0 AND contact_vehicle_id IS NOT NULL
-        GROUP BY contact_vehicle_id
-      ) sold ON sold.contact_vehicle_id = cv.id
+        WHERE is_cancelled = 0
+          AND (stock_item_id IS NOT NULL OR contact_vehicle_id IS NOT NULL)
+        GROUP BY stock_item_id, contact_vehicle_id
+      ) sold ON (
+        (stock.id IS NOT NULL AND sold.stock_item_id = stock.id)
+        OR (stock.id IS NULL AND sold.contact_vehicle_id = cv.id)
+      )
 
       ${whereSql}
     `;
@@ -146,8 +161,10 @@ exports.listSearch = async (req, res) => {
         cv.created_at,
         vm.model_name,
         vv.variant_name,
-        (sold.sale_id IS NOT NULL) AS is_sold,
-        sold.sale_id AS sold_sale_id
+        stock.id AS stock_item_id,
+        stock.status_code AS stock_status,
+        (sold.sale_id IS NOT NULL OR LOWER(COALESCE(stock.status_code, '')) = 'sold') AS is_sold,
+        COALESCE(sold.sale_id, stock.sale_id) AS sold_sale_id
       ${baseFrom}
       ORDER BY cv.created_at DESC, cv.id DESC
       LIMIT ? OFFSET ?

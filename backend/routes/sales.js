@@ -32,6 +32,9 @@ router.get("/export", requireRole(["owner", "admin"]), salesController.exportSal
 // ✅ Trace sales by chassis/engine (pagination supported)
 router.get("/trace", salesController.traceSales);
 
+// ✅ Live in-stock vehicles for selected contact
+router.get("/available-stock", salesController.getAvailableStock);
+
 // ✅ List (pagination + search + filters + date range)
 router.get("/", salesController.getAllSales);
 
