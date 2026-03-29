@@ -29,7 +29,32 @@ async function fetchPhones(contactId) {
 
 async function fetchVehicles(contactId) {
   const [vehicles] = await db.query(
-    `SELECT cv.*, vm.model_name, vv.variant_name
+    `SELECT
+       cv.*,
+       vm.model_name,
+       vv.variant_name,
+
+       CASE
+         WHEN EXISTS (
+           SELECT 1
+           FROM sale_vehicle_links svl
+           WHERE svl.vehicle_id = cv.id
+           LIMIT 1
+         ) THEN 1
+         ELSE 0
+       END AS is_sale_linked,
+
+       (
+         SELECT COUNT(*)
+         FROM sale_vehicle_links svl
+         WHERE svl.vehicle_id = cv.id
+       ) AS sale_link_count,
+
+       (
+         SELECT COUNT(*)
+         FROM sales s
+         WHERE s.contact_vehicle_id = cv.id
+       ) AS sale_history_count
      FROM contact_vehicles cv
      LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
      LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
@@ -454,17 +479,50 @@ exports.deactivatePhone = async (req, res) => {
 // ---------- add vehicle ----------
 exports.addVehicle = async (req, res) => {
   try {
+    // ✅ support both old logic and new contact-page logic
+    const contactId =
+      Number(req.params.id) ||
+      Number(req.body?.contact_id) ||
+      0;
+
     const {
-      contact_id,
       chassis_number,
       engine_number,
       rto_number,
       model_id,
       variant_id,
-    } = req.body;
+    } = req.body || {};
 
-    if (!contact_id) {
-      return res.status(400).json({ success: false, message: "contact_id required" });
+    if (!contactId) {
+      return res.status(400).json({
+        success: false,
+        message: "contact_id required",
+      });
+    }
+
+    const chassis = String(chassis_number || "").trim();
+    const engine = String(engine_number || "").trim();
+    const rtoNumber = String(rto_number || "").trim();
+    const modelId = Number(model_id) || null;
+    const variantId = Number(variant_id) || null;
+
+    if (!chassis || !engine) {
+      return res.status(400).json({
+        success: false,
+        message: "Chassis number and Engine number are required",
+      });
+    }
+
+    const [contactRows] = await db.query(
+      `SELECT id FROM contacts WHERE id = ? LIMIT 1`,
+      [contactId]
+    );
+
+    if (!contactRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Contact not found",
+      });
     }
 
     const conn = await db.getConnection();
@@ -476,18 +534,18 @@ exports.addVehicle = async (req, res) => {
       // -------------------------------------------------
       let existing = null;
 
-      if (chassis_number) {
+      if (chassis) {
         const [rows] = await conn.query(
           `SELECT * FROM contact_vehicles WHERE chassis_number = ? LIMIT 1 FOR UPDATE`,
-          [chassis_number]
+          [chassis]
         );
         existing = rows?.[0] || null;
       }
 
-      if (!existing && engine_number) {
+      if (!existing && engine) {
         const [rows] = await conn.query(
           `SELECT * FROM contact_vehicles WHERE engine_number = ? LIMIT 1 FOR UPDATE`,
-          [engine_number]
+          [engine]
         );
         existing = rows?.[0] || null;
       }
@@ -501,14 +559,14 @@ exports.addVehicle = async (req, res) => {
         if (!existing.contact_id) {
           await conn.query(
             `UPDATE contact_vehicles SET contact_id = ? WHERE id = ?`,
-            [contact_id, vehicleId]
+            [contactId, vehicleId]
           );
         }
 
         // If linked to another contact → block
         if (
           existing.contact_id &&
-          Number(existing.contact_id) !== Number(contact_id)
+          Number(existing.contact_id) !== Number(contactId)
         ) {
           await conn.rollback();
           return res.status(409).json({
@@ -521,16 +579,16 @@ exports.addVehicle = async (req, res) => {
         // 2. Create new vehicle
         // -------------------------------------------------
         const [ins] = await conn.query(
-          `INSERT INTO contact_vehicles 
+          `INSERT INTO contact_vehicles
           (contact_id, chassis_number, engine_number, rto_number, model_id, variant_id)
           VALUES (?, ?, ?, ?, ?, ?)`,
           [
-            contact_id,
-            chassis_number || null,
-            engine_number || null,
-            rto_number || null,
-            model_id || null,
-            variant_id || null,
+            contactId,
+            chassis || null,
+            engine || null,
+            safeText(rtoNumber),
+            modelId,
+            variantId,
           ]
         );
 
@@ -539,9 +597,45 @@ exports.addVehicle = async (req, res) => {
 
       await conn.commit();
 
-      return res.json({
+      const [rows] = await db.query(
+        `SELECT
+           cv.*,
+           vm.model_name,
+           vv.variant_name,
+
+           CASE
+             WHEN EXISTS (
+               SELECT 1
+               FROM sale_vehicle_links svl
+               WHERE svl.vehicle_id = cv.id
+               LIMIT 1
+             ) THEN 1
+             ELSE 0
+           END AS is_sale_linked,
+
+           (
+             SELECT COUNT(*)
+             FROM sale_vehicle_links svl
+             WHERE svl.vehicle_id = cv.id
+           ) AS sale_link_count,
+
+           (
+             SELECT COUNT(*)
+             FROM sales s
+             WHERE s.contact_vehicle_id = cv.id
+           ) AS sale_history_count
+
+         FROM contact_vehicles cv
+         LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
+         LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
+         WHERE cv.id = ?
+         LIMIT 1`,
+        [vehicleId]
+      );
+
+      return res.status(existing ? 200 : 201).json({
         success: true,
-        data: { id: vehicleId },
+        data: rows[0] || { id: vehicleId },
       });
     } catch (e) {
       await conn.rollback();
@@ -551,7 +645,18 @@ exports.addVehicle = async (req, res) => {
     }
   } catch (err) {
     console.error("addVehicle error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+
+    if (String(err?.code) === "ER_DUP_ENTRY") {
+      return res.status(409).json({
+        success: false,
+        message: "This chassis or engine number already exists in another contact.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error",
+    });
   }
 };
 
@@ -793,42 +898,122 @@ exports.importContactsExcel = [
 
 exports.deactivateVehicle = async (req, res) => {
   try {
-    const contactId = Number(req.params.id);
-    const vehicleId = Number(req.params.vehicleId);
+    const contactId = Number(req.params.id || 0);
+    const vehicleId = Number(req.params.vehicleId || 0);
 
-    if (!contactId) return res.status(400).json({ success: false, message: "Invalid contact id" });
-    if (!vehicleId) return res.status(400).json({ success: false, message: "Invalid vehicle id" });
+    if (!contactId || !vehicleId) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid contact or vehicle id",
+      });
+    }
 
-    try {
-      const [r] = await db.query(
-        `UPDATE contact_vehicles
-         SET is_active = 0, deactivated_at = NOW()
-         WHERE id = ? AND contact_id = ?`,
+    const role = String(req.user?.role || "").toLowerCase();
+    const allowedRoles = new Set(["owner", "admin", "manager"]);
+
+    if (!allowedRoles.has(role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only owner, admin and manager can remove vehicles.",
+      });
+    }
+
+    const [vehicleRows] = await db.query(
+      `
+      SELECT id, contact_id
+      FROM contact_vehicles
+      WHERE id = ? AND contact_id = ?
+      LIMIT 1
+      `,
+      [vehicleId, contactId]
+    );
+
+    if (!vehicleRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Vehicle not found for this contact.",
+      });
+    }
+
+    const [saleLinkRows] = await db.query(
+      `
+      SELECT id
+      FROM sale_vehicle_links
+      WHERE vehicle_id = ?
+      LIMIT 1
+      `,
+      [vehicleId]
+    );
+
+    if (saleLinkRows.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Vehicle is linked with sale history and cannot be removed.",
+      });
+    }
+
+    const [saleRows] = await db.query(
+      `
+      SELECT id
+      FROM sales
+      WHERE contact_vehicle_id = ?
+      LIMIT 1
+      `,
+      [vehicleId]
+    );
+
+    if (saleRows.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Vehicle is linked with sale history and cannot be removed.",
+      });
+    }
+
+    const [stockRows] = await db.query(
+      `
+      SELECT id
+      FROM vehicle_purchase_items
+      WHERE contact_vehicle_id = ?
+      LIMIT 1
+      `,
+      [vehicleId]
+    );
+
+    if (stockRows.length) {
+      await db.query(
+        `
+        UPDATE contact_vehicles
+        SET contact_id = NULL
+        WHERE id = ? AND contact_id = ?
+        `,
         [vehicleId, contactId]
       );
 
-      if (r.affectedRows === 0) {
-        return res.status(404).json({ success: false, message: "Vehicle not found" });
-      }
-    } catch (e) {
-      if (String(e?.code) === "ER_BAD_FIELD_ERROR") {
-        const [r2] = await db.query(
-          `DELETE FROM contact_vehicles WHERE id = ? AND contact_id = ?`,
-          [vehicleId, contactId]
-        );
-        if (r2.affectedRows === 0) {
-          return res.status(404).json({ success: false, message: "Vehicle not found" });
-        }
-      } else {
-        throw e;
-      }
+      const data = await fetchContactById(contactId);
+      return res.json({
+        success: true,
+        message: "Vehicle unlinked from contact successfully.",
+        data,
+      });
     }
 
+    await db.query(
+      `
+      DELETE FROM contact_vehicles
+      WHERE id = ? AND contact_id = ?
+      `,
+      [vehicleId, contactId]
+    );
+
     const data = await fetchContactById(contactId);
-    return res.json({ success: true, data });
+    return res.json({
+      success: true,
+      message: "Vehicle removed successfully.",
+      data,
+    });
   } catch (e) {
     console.error("deactivateVehicle:", e);
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: e?.message || "Server error" });
   }
 };
 

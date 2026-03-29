@@ -28,6 +28,9 @@ type Vehicle = {
   is_active?: number;
   created_at?: string;
   deactivated_at?: string | null;
+  is_sale_linked?: number;
+  sale_link_count?: number;
+  sale_history_count?: number;
 };
 
 type ContactDetail = {
@@ -52,6 +55,18 @@ function isTenDigit(v: string) {
   return /^[0-9]{10}$/.test(v.trim());
 }
 
+function canRemoveVehicle(vehicle: Vehicle, role: string) {
+  const r = String(role || "").toLowerCase();
+  const allowed = r === "owner" || r === "admin" || r === "manager";
+  if (!allowed) return false;
+
+  if (Number(vehicle.sale_history_count || 0) > 0) return false;
+  if (Number(vehicle.sale_link_count || 0) > 0) return false;
+  if (Number(vehicle.is_sale_linked || 0) === 1) return false;
+
+  return true;
+}
+
 export default function ContactDetailPage() {
   return (
     <AuthGuard>
@@ -64,7 +79,6 @@ function Inner() {
   const params = useParams();
   const id = Number((params as any)?.id);
 
-  // Hydration-safe role read (getUser uses localStorage)
   const [mounted, setMounted] = useState(false);
   const [role, setRole] = useState<string>("");
   useEffect(() => {
@@ -84,7 +98,7 @@ function Inner() {
     hasPermission("contacts_delete");
 
   const canEdit = isOwnerAdmin || hasPermission("contacts_edit");
-  const canDelete = isOwnerAdmin || hasPermission("contacts_delete");
+  const canDelete = isOwnerAdmin || hasPermission("contacts_delete") || role === "manager";
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -92,7 +106,6 @@ function Inner() {
 
   const [contact, setContact] = useState<ContactDetail | null>(null);
 
-  // editable fields
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [notes, setNotes] = useState("");
@@ -101,12 +114,10 @@ function Inner() {
   const [tehsil, setTehsil] = useState("");
   const [address, setAddress] = useState("");
 
-  // phones
   const [newPhone, setNewPhone] = useState("");
   const [newPhonePrimary, setNewPhonePrimary] = useState(false);
   const [busyPhoneId, setBusyPhoneId] = useState<number | null>(null);
 
-  // vehicles + catalog
   const [models, setModels] = useState<ModelRow[]>([]);
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [vehChassis, setVehChassis] = useState("");
@@ -482,26 +493,42 @@ function Inner() {
                     vehicles.map((v) => {
                       const active = v.is_active == null ? true : Number(v.is_active) === 1;
                       const busy = busyVehicleId === v.id;
+                      const removable = canRemoveVehicle(v, role);
 
                       return (
                         <div key={v.id} className="border rounded p-3 flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <div className="font-semibold break-words">
                               {v.model_name || "-"} {v.variant_name ? `• ${v.variant_name}` : ""}
-                              {!active && <span className="ml-2 text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">OLD</span>}
+                              {!active && (
+                                <span className="ml-2 text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                                  OLD
+                                </span>
+                              )}
+                              {Number(v.is_sale_linked || 0) === 1 ? (
+                                <span className="ml-2 text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                                  Sale Linked
+                                </span>
+                              ) : (
+                                <span className="ml-2 text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                                  Manual
+                                </span>
+                              )}
                             </div>
                             <div className="text-sm text-gray-700 break-words">
                               Chassis: {v.chassis_number} • Engine: {v.engine_number}
                             </div>
                           </div>
 
-                          <button
-                            onClick={() => removeVehicle(v.id)}
-                            disabled={!canDelete || busy}
-                            className="px-3 py-2 rounded border bg-white disabled:opacity-60"
-                          >
-                            Remove
-                          </button>
+                          {removable ? (
+                            <button
+                              onClick={() => removeVehicle(v.id)}
+                              disabled={!canDelete || busy}
+                              className="px-3 py-2 rounded border bg-white disabled:opacity-60"
+                            >
+                              Remove
+                            </button>
+                          ) : null}
                         </div>
                       );
                     })

@@ -3,6 +3,74 @@ const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
 
+
+async function ensureContactVehicleLink({
+  connection,
+  stockItemId,
+  contactId,
+}) {
+  // 1. Get stock item
+  const [rows] = await connection.query(
+    `SELECT id, contact_vehicle_id, chassis_number, engine_number
+     FROM vehicle_purchase_items
+     WHERE id = ?`,
+    [stockItemId]
+  );
+
+  if (!rows.length) {
+    throw new Error("Stock item not found");
+  }
+
+  const stock = rows[0];
+
+  // 2. If already linked properly → return
+  if (stock.contact_vehicle_id) {
+    const [cvRows] = await connection.query(
+      `SELECT id, contact_id FROM contact_vehicles WHERE id = ?`,
+      [stock.contact_vehicle_id]
+    );
+
+    if (cvRows.length && cvRows[0].contact_id) {
+      return stock.contact_vehicle_id;
+    }
+  }
+
+  // 3. Try find existing vehicle for this customer
+  const [existing] = await connection.query(
+    `SELECT id FROM contact_vehicles
+     WHERE contact_id = ?
+     AND chassis_number = ?
+     LIMIT 1`,
+    [contactId, stock.chassis_number]
+  );
+
+  let contactVehicleId;
+
+  if (existing.length) {
+    contactVehicleId = existing[0].id;
+  } else {
+    // 4. Create new contact vehicle
+    const [insert] = await connection.query(
+      `INSERT INTO contact_vehicles
+       (contact_id, chassis_number, engine_number, created_at)
+       VALUES (?, ?, ?, NOW())`,
+      [contactId, stock.chassis_number, stock.engine_number]
+    );
+
+    contactVehicleId = insert.insertId;
+  }
+
+  // 5. Update stock item
+  await connection.query(
+    `UPDATE vehicle_purchase_items
+     SET contact_vehicle_id = ?
+     WHERE id = ?`,
+    [contactVehicleId, stockItemId]
+  );
+
+  return contactVehicleId;
+}
+
 // =====================================================
 // Upload storage (documents)
 // =====================================================
@@ -957,130 +1025,52 @@ exports.createSale = async (req, res) => {
         excludeSaleId: null,
       });
 
-      let finalVehicleId = vehicleId || (stock.contact_vehicle_id ? Number(stock.contact_vehicle_id) : null);
+      let finalVehicleId = vehicleId || null;
       let vehicle = null;
 
-      if (!finalVehicleId) {
-        const modelId = stock.model_id ? Number(stock.model_id) : null;
-        const variantId = stock.variant_id ? Number(stock.variant_id) : null;
+      // =====================================================
+      // FINAL VEHICLE LINK RESOLUTION
+      // =====================================================
+      if (finalVehicleId) {
+        const [existingVehicleRows] = await conn.query(
+          `
+          SELECT cv.*,
+                 vm.model_name,
+                 vv.variant_name
+          FROM contact_vehicles cv
+          LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
+          WHERE cv.id = ?
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [finalVehicleId]
+        );
 
-        let modelName = null;
-        let variantName = null;
-
-        if (modelId) {
-          const [mRows] = await conn.query(
-            `SELECT model_name
-             FROM vehicle_models
-             WHERE id = ?
-             LIMIT 1`,
-            [modelId]
-          );
-          modelName = mRows?.[0]?.model_name || null;
+        if (!existingVehicleRows.length) {
+          const err = new Error("Selected vehicle not found");
+          err.statusCode = 400;
+          throw err;
         }
 
-        if (variantId) {
-          const [vrRows] = await conn.query(
-            `SELECT variant_name
-             FROM vehicle_variants
-             WHERE id = ?
-             LIMIT 1`,
-            [variantId]
-          );
-          variantName = vrRows?.[0]?.variant_name || null;
-        }
+        const existingVehicle = existingVehicleRows[0];
 
-        const chassis = safeText(stock.chassis_number);
-        const engine = safeText(stock.engine_number);
-
-        let existingVehicle = null;
-
-        if (chassis) {
-          const [rowsByChassis] = await conn.query(
-            `
-            SELECT *
-            FROM contact_vehicles
-            WHERE chassis_number = ?
-            ORDER BY id DESC
-            LIMIT 1
-            FOR UPDATE
-            `,
-            [chassis]
-          );
-          existingVehicle = rowsByChassis?.[0] || null;
-        }
-
-        if (!existingVehicle && engine) {
-          const [rowsByEngine] = await conn.query(
-            `
-            SELECT *
-            FROM contact_vehicles
-            WHERE engine_number = ?
-            ORDER BY id DESC
-            LIMIT 1
-            FOR UPDATE
-            `,
-            [engine]
-          );
-          existingVehicle = rowsByEngine?.[0] || null;
-        }
-
-        if (existingVehicle) {
-          finalVehicleId = Number(existingVehicle.id);
-
-          if (!existingVehicle.contact_id) {
-            await conn.query(
-              `
-              UPDATE contact_vehicles
-              SET contact_id = ?
-              WHERE id = ?
-              `,
-              [contactId, finalVehicleId]
-            );
-          }
-
-          if (
-            existingVehicle.contact_id &&
-            Number(existingVehicle.contact_id) !== Number(contactId)
-          ) {
-            const err = new Error("This vehicle is already linked to another customer");
-            err.statusCode = 409;
-            throw err;
-          }
-
+        if (!existingVehicle.contact_id) {
           await conn.query(
             `
-            UPDATE vehicle_purchase_items
-            SET contact_vehicle_id = ?
+            UPDATE contact_vehicles
+            SET contact_id = ?
             WHERE id = ?
             `,
-            [finalVehicleId, stockItemId]
+            [contactId, finalVehicleId]
           );
-        } else {
-          const autoVehiclePayload = {
-            contact_id: contactId,
-            model_id: modelId,
-            variant_id: variantId,
-            vehicle_make: safeText(body.vehicle_make) || "Hero",
-            vehicle_model:
-              safeText(body.vehicle_model) ||
-              safeText(variantName ? `${modelName || ""} ${variantName}`.trim() : modelName) ||
-              null,
-            color: safeText(stock.color),
-            chassis_number: chassis,
-            engine_number: engine,
-          };
+        } else if (Number(existingVehicle.contact_id) !== Number(contactId)) {
+          const err = new Error("This vehicle is already linked to another customer");
+          err.statusCode = 409;
+          throw err;
+        }
 
-          const autoCols = Object.keys(autoVehiclePayload);
-          const autoVals = autoCols.map((k) => autoVehiclePayload[k]);
-
-          const [autoIns] = await conn.query(
-            `INSERT INTO contact_vehicles (${autoCols.join(",")})
-             VALUES (${autoCols.map(() => "?").join(",")})`,
-            autoVals
-          );
-
-          finalVehicleId = autoIns.insertId;
-
+        if (!stock.contact_vehicle_id || Number(stock.contact_vehicle_id) !== Number(finalVehicleId)) {
           await conn.query(
             `
             UPDATE vehicle_purchase_items
@@ -1090,6 +1080,12 @@ exports.createSale = async (req, res) => {
             [finalVehicleId, stockItemId]
           );
         }
+      } else {
+        finalVehicleId = await ensureContactVehicleLink({
+          connection: conn,
+          stockItemId,
+          contactId,
+        });
       }
 
       if (finalVehicleId) {
@@ -1203,6 +1199,18 @@ exports.createSale = async (req, res) => {
         );
       }
 
+      // extra safety: ensure contact_vehicle row definitely has customer after sale
+      if (finalVehicleId) {
+        await conn.query(
+          `
+          UPDATE contact_vehicles
+          SET contact_id = COALESCE(contact_id, ?)
+          WHERE id = ?
+          `,
+          [contactId, finalVehicleId]
+        );
+      }
+
       await markStockItemSold(conn, stockItemId, saleId, finalVehicleId || null);
 
       await conn.query(
@@ -1296,7 +1304,10 @@ exports.updateSale = async (req, res) => {
 
     await conn.beginTransaction();
 
-    const [curRows] = await conn.query(`SELECT * FROM sales WHERE id = ? LIMIT 1`, [id]);
+    const [curRows] = await conn.query(
+      `SELECT * FROM sales WHERE id = ? LIMIT 1 FOR UPDATE`,
+      [id]
+    );
     if (!curRows.length) {
       await conn.rollback();
       return res.status(404).json({ success: false, message: "Sale not found" });
@@ -1313,37 +1324,110 @@ exports.updateSale = async (req, res) => {
         ? Number(body.contact_id)
         : cur.contact_id;
 
-    const newVehicleId =
+    const requestedVehicleId =
       body.contact_vehicle_id != null && String(body.contact_vehicle_id).trim() !== ""
         ? Number(body.contact_vehicle_id)
-        : cur.contact_vehicle_id;
+        : (cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null);
 
     const newStockItemId =
       body.stock_item_id != null && String(body.stock_item_id).trim() !== ""
         ? Number(body.stock_item_id)
-        : cur.stock_item_id;
+        : (cur.stock_item_id ? Number(cur.stock_item_id) : null);
 
     const changingLink =
-      (body.contact_id != null && newContactId !== cur.contact_id) ||
-      (body.contact_vehicle_id != null && newVehicleId !== cur.contact_vehicle_id) ||
-      (body.stock_item_id != null && Number(newStockItemId || 0) !== Number(cur.stock_item_id || 0));
+      (body.contact_id != null && Number(newContactId || 0) !== Number(cur.contact_id || 0)) ||
+      (body.contact_vehicle_id != null &&
+        Number(requestedVehicleId || 0) !== Number(cur.contact_vehicle_id || 0)) ||
+      (body.stock_item_id != null &&
+        Number(newStockItemId || 0) !== Number(cur.stock_item_id || 0));
 
     if (changingLink) {
-      if (!newContactId || !newVehicleId || !newStockItemId) {
+      if (!newContactId || !newStockItemId) {
         await conn.rollback();
         return res.status(400).json({
           success: false,
-          message: "contact_id, contact_vehicle_id and stock_item_id are required together",
+          message: "contact_id and stock_item_id are required when changing vehicle linkage",
         });
       }
     }
 
-    if (newVehicleId && newVehicleId !== cur.contact_vehicle_id) {
-      await assertVehicleNotSold(conn, newVehicleId, id);
-    }
+    const oldVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
+    const oldStockItemId = cur.stock_item_id ? Number(cur.stock_item_id) : null;
 
+    let finalVehicleId = requestedVehicleId || null;
+    let vehicle = null;
     let hydrated = null;
-    if (changingLink) {
+
+    // =====================================================
+    // AUTO HEAL / RE-LINK VEHICLE WHEN CONTACT OR STOCK CHANGES
+    // =====================================================
+    if (changingLink && newStockItemId) {
+      const stock = await assertStockItemAssignable(conn, {
+        stockItemId: newStockItemId,
+        contactVehicleId: finalVehicleId,
+        excludeSaleId: id,
+      });
+
+      if (finalVehicleId) {
+        const [existingVehicleRows] = await conn.query(
+          `
+          SELECT cv.*,
+                 vm.model_name,
+                 vv.variant_name
+          FROM contact_vehicles cv
+          LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
+          WHERE cv.id = ?
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [finalVehicleId]
+        );
+
+        if (!existingVehicleRows.length) {
+          await conn.rollback();
+          return res.status(400).json({ success: false, message: "Vehicle not found." });
+        }
+
+        const existingVehicle = existingVehicleRows[0];
+
+        if (!existingVehicle.contact_id) {
+          await conn.query(
+            `
+            UPDATE contact_vehicles
+            SET contact_id = ?
+            WHERE id = ?
+            `,
+            [newContactId, finalVehicleId]
+          );
+        } else if (Number(existingVehicle.contact_id) !== Number(newContactId)) {
+          const err = new Error("This vehicle is already linked to another customer");
+          err.statusCode = 409;
+          throw err;
+        }
+
+        if (!stock.contact_vehicle_id || Number(stock.contact_vehicle_id) !== Number(finalVehicleId)) {
+          await conn.query(
+            `
+            UPDATE vehicle_purchase_items
+            SET contact_vehicle_id = ?
+            WHERE id = ?
+            `,
+            [finalVehicleId, newStockItemId]
+          );
+        }
+      } else {
+        finalVehicleId = await ensureContactVehicleLink({
+          connection: conn,
+          stockItemId: newStockItemId,
+          contactId: newContactId,
+        });
+      }
+
+      if (finalVehicleId) {
+        await assertVehicleNotSold(conn, finalVehicleId, id);
+      }
+
       const [cRows] = await conn.query(
         `SELECT id, first_name, last_name, full_name, address
          FROM contacts
@@ -1366,13 +1450,13 @@ exports.updateSale = async (req, res) => {
          LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
          WHERE cv.id = ?
          LIMIT 1`,
-        [newVehicleId]
+        [finalVehicleId]
       );
       if (!vRows.length) {
         await conn.rollback();
         return res.status(400).json({ success: false, message: "Vehicle not found." });
       }
-      const vehicle = vRows[0];
+      vehicle = vRows[0];
 
       const [pRows] = await conn.query(
         `SELECT phone
@@ -1390,15 +1474,22 @@ exports.updateSale = async (req, res) => {
 
       hydrated = {
         contact_id: newContactId,
-        contact_vehicle_id: newVehicleId,
+        contact_vehicle_id: finalVehicleId,
         customer_name: safeText(body.customer_name) || safeText(fullName) || cur.customer_name,
         mobile_number: safeText(body.mobile_number) || safeText(primaryPhone) || cur.mobile_number,
         address: safeText(body.address) || safeText(contact.address) || cur.address,
 
-        vehicle_make: safeText(body.vehicle_make) || safeText(vehicle.make) || cur.vehicle_make,
+        vehicle_make:
+          safeText(body.vehicle_make) ||
+          safeText(vehicle.make) ||
+          safeText(vehicle.vehicle_make) ||
+          cur.vehicle_make,
+
         vehicle_model:
           safeText(body.vehicle_model) ||
-          safeText(vehicle.variant_name ? `${vehicle.model_name} ${vehicle.variant_name}` : vehicle.model_name) ||
+          safeText(
+            vehicle.variant_name ? `${vehicle.model_name} ${vehicle.variant_name}` : vehicle.model_name
+          ) ||
           safeText(vehicle.model_name) ||
           cur.vehicle_model,
 
@@ -1410,14 +1501,39 @@ exports.updateSale = async (req, res) => {
           safeText(vehicle.registration_number) ||
           null,
 
-        chassis_number: safeText(body.chassis_number) || safeText(vehicle.chassis_number) || cur.chassis_number,
-        engine_number: safeText(body.engine_number) || safeText(vehicle.engine_number) || cur.engine_number,
+        chassis_number:
+          safeText(body.chassis_number) || safeText(vehicle.chassis_number) || cur.chassis_number,
+
+        engine_number:
+          safeText(body.engine_number) || safeText(vehicle.engine_number) || cur.engine_number,
       };
+    } else {
+      finalVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
+    }
+
+    const finalContactId = hydrated?.contact_id
+      ? Number(hydrated.contact_id)
+      : (cur.contact_id ? Number(cur.contact_id) : null);
+
+    const finalStockItemId = newStockItemId ? Number(newStockItemId) : null;
+
+    if (finalStockItemId) {
+      await assertStockItemAssignable(conn, {
+        stockItemId: finalStockItemId,
+        contactVehicleId: finalVehicleId,
+        excludeSaleId: id,
+      });
     }
 
     const updates = {
-      ...(hydrated ? { contact_id: hydrated.contact_id, contact_vehicle_id: hydrated.contact_vehicle_id } : {}),
-      stock_item_id: newStockItemId,
+      ...(hydrated
+        ? {
+            contact_id: hydrated.contact_id,
+            contact_vehicle_id: hydrated.contact_vehicle_id,
+          }
+        : {}),
+
+      stock_item_id: finalStockItemId,
 
       father_name: extra.father_name,
       age: extra.age,
@@ -1479,27 +1595,6 @@ exports.updateSale = async (req, res) => {
       branch_id: branchId,
     };
 
-    const oldVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
-    const oldStockItemId = cur.stock_item_id ? Number(cur.stock_item_id) : null;
-
-    const finalVehicleId = hydrated?.contact_vehicle_id
-      ? Number(hydrated.contact_vehicle_id)
-      : (cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null);
-
-    const finalContactId = hydrated?.contact_id
-      ? Number(hydrated.contact_id)
-      : (cur.contact_id ? Number(cur.contact_id) : null);
-
-    const finalStockItemId = newStockItemId ? Number(newStockItemId) : null;
-
-    if (finalStockItemId) {
-      await assertStockItemAssignable(conn, {
-        stockItemId: finalStockItemId,
-        contactVehicleId: finalVehicleId,
-        excludeSaleId: id,
-      });
-    }
-
     const cols = Object.keys(updates).filter((k) => k !== undefined);
     const setSql = cols.map((c) => `${c} = ?`).join(", ");
     const vals = cols.map((k) => updates[k]);
@@ -1523,6 +1618,16 @@ exports.updateSale = async (req, res) => {
          VALUES (?,?,?)
          ON DUPLICATE KEY UPDATE contact_id = VALUES(contact_id)`,
         [id, finalVehicleId, finalContactId]
+      );
+
+      // extra safety: heal customer link on edited sale too
+      await conn.query(
+        `
+        UPDATE contact_vehicles
+        SET contact_id = COALESCE(contact_id, ?)
+        WHERE id = ?
+        `,
+        [finalContactId, finalVehicleId]
       );
 
       await markStockItemSold(conn, finalStockItemId, id, finalVehicleId);
@@ -1605,11 +1710,13 @@ exports.cancelSale = async (req, res) => {
     }
 
     const [rows] = await conn.query(
-      `SELECT id, stock_item_id, is_cancelled
-       FROM sales
-       WHERE id = ?
-       LIMIT 1
-       FOR UPDATE`,
+      `
+      SELECT id, stock_item_id, contact_vehicle_id, contact_id, is_cancelled
+      FROM sales
+      WHERE id = ?
+      LIMIT 1
+      FOR UPDATE
+      `,
       [saleId]
     );
 
@@ -1625,29 +1732,82 @@ exports.cancelSale = async (req, res) => {
       return res.status(400).json({ success: false, message: "Sale already cancelled" });
     }
 
-    if (sale.stock_item_id) {
-      await restoreStockItemToInStock(conn, sale.stock_item_id);
+    const stockItemId = sale.stock_item_id ? Number(sale.stock_item_id) : null;
+    const contactVehicleId = sale.contact_vehicle_id ? Number(sale.contact_vehicle_id) : null;
+
+    // 1) restore stock
+    if (stockItemId) {
+      await restoreStockItemToInStock(conn, stockItemId);
     }
 
+    // 2) mark sale cancelled
     await conn.query(
-      `UPDATE sales
-       SET is_cancelled = 1
-       WHERE id = ?`,
+      `
+      UPDATE sales
+      SET is_cancelled = 1
+      WHERE id = ?
+      `,
       [saleId]
     );
+
+    // 3) remove link row for this cancelled sale
+    if (contactVehicleId) {
+      await conn.query(
+        `
+        DELETE FROM sale_vehicle_links
+        WHERE sale_id = ?
+          AND vehicle_id = ?
+        `,
+        [saleId, contactVehicleId]
+      );
+    }
+
+    // 4) if this vehicle is not used by any other active sale,
+    //    unlink it from customer so contact page does not show it
+    if (contactVehicleId) {
+      const [activeRows] = await conn.query(
+        `
+        SELECT id
+        FROM sales
+        WHERE contact_vehicle_id = ?
+          AND is_cancelled = 0
+          AND id != ?
+        LIMIT 1
+        `,
+        [contactVehicleId, saleId]
+      );
+
+      if (!activeRows.length) {
+        await conn.query(
+          `
+          UPDATE contact_vehicles
+          SET contact_id = NULL
+          WHERE id = ?
+          `,
+          [contactVehicleId]
+        );
+      }
+    }
 
     await cancelLinkedInsurance(conn, saleId, req.user?.id || null);
     await refreshSnapshots(conn, saleId, "cancel", req.user?.id || null);
 
     await conn.commit();
 
-    return res.json({ success: true, message: "Sale cancelled successfully" });
+    return res.json({
+      success: true,
+      message: "Sale cancelled successfully",
+    });
   } catch (err) {
     try {
       await conn.rollback();
     } catch {}
+
     console.error("cancelSale error:", err);
-    return res.status(500).json({ success: false, message: err?.message || "Server error" });
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error",
+    });
   } finally {
     conn.release();
   }
@@ -2026,10 +2186,16 @@ exports.deleteSale = async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    const saleId = req.params.id;
+    const saleId = Number(req.params.id);
 
     const [rows] = await conn.query(
-      `SELECT stock_item_id FROM sales WHERE id = ? FOR UPDATE`,
+      `
+      SELECT stock_item_id, contact_vehicle_id
+      FROM sales
+      WHERE id = ?
+      LIMIT 1
+      FOR UPDATE
+      `,
       [saleId]
     );
 
@@ -2037,13 +2203,53 @@ exports.deleteSale = async (req, res) => {
       throw new Error("Sale not found");
     }
 
-    const stockItemId = rows[0].stock_item_id;
+    const stockItemId = rows[0].stock_item_id ? Number(rows[0].stock_item_id) : null;
+    const contactVehicleId = rows[0].contact_vehicle_id ? Number(rows[0].contact_vehicle_id) : null;
 
+    // restore stock
     if (stockItemId) {
       await restoreStockItemToInStock(conn, stockItemId);
     }
 
+    // remove sale_vehicle_links for this sale
+    if (contactVehicleId) {
+      await conn.query(
+        `
+        DELETE FROM sale_vehicle_links
+        WHERE sale_id = ?
+          AND vehicle_id = ?
+        `,
+        [saleId, contactVehicleId]
+      );
+    }
+
+    // delete sale
     await conn.query(`DELETE FROM sales WHERE id = ?`, [saleId]);
+
+    // if vehicle no longer belongs to any active sale, unlink from contact
+    if (contactVehicleId) {
+      const [activeRows] = await conn.query(
+        `
+        SELECT id
+        FROM sales
+        WHERE contact_vehicle_id = ?
+          AND is_cancelled = 0
+        LIMIT 1
+        `,
+        [contactVehicleId]
+      );
+
+      if (!activeRows.length) {
+        await conn.query(
+          `
+          UPDATE contact_vehicles
+          SET contact_id = NULL
+          WHERE id = ?
+          `,
+          [contactVehicleId]
+        );
+      }
+    }
 
     await conn.commit();
 
@@ -2074,7 +2280,14 @@ exports.getAvailableStock = async (req, res) => {
     const params = [contactId];
     const where = [];
 
-    where.push(`(cv.id IS NULL OR cv.contact_id = ?)`);
+    // ✅ IMPORTANT FIX:
+    // show stock if:
+    // 1) no contact_vehicle row exists
+    // 2) contact_vehicle exists but has no customer linked yet
+    // 3) contact_vehicle is linked to selected customer
+    //
+    // hide only rows linked to some other customer
+    where.push(`(cv.id IS NULL OR cv.contact_id IS NULL OR cv.contact_id = ?)`);
 
     if (q) {
       const like = `%${q}%`;
@@ -2148,7 +2361,7 @@ exports.getAvailableStock = async (req, res) => {
 
       ORDER BY
         CASE WHEN cv.contact_id = ? THEN 0 ELSE 1 END,
-        CASE WHEN cv.id IS NULL THEN 0 ELSE 1 END,
+        CASE WHEN cv.id IS NULL OR cv.contact_id IS NULL THEN 0 ELSE 1 END,
         CASE WHEN LOWER(COALESCE(vpi.status_code, '')) IN ('in_stock', 'booked') AND vpi.sale_id IS NULL THEN 0 ELSE 1 END,
         vpi.id DESC
       `,
@@ -2158,11 +2371,22 @@ exports.getAvailableStock = async (req, res) => {
     const allRows = Array.isArray(rows) ? rows : [];
 
     const linked = allRows.filter((r) => Number(r.is_selected_contact_vehicle) === 1);
-    const unlinked = allRows.filter((r) => !Number(r.contact_vehicle_id || 0));
+
+    // ✅ treat customer-less linked vehicle as usable/unlinked
+    const unlinked = allRows.filter(
+      (r) =>
+        Number(r.is_selected_contact_vehicle) !== 1 &&
+        (
+          !Number(r.contact_vehicle_id || 0) ||
+          r.contact_id == null
+        )
+    );
+
     const otherVisible = allRows.filter(
       (r) =>
         Number(r.is_selected_contact_vehicle) !== 1 &&
-        Number(r.contact_vehicle_id || 0) !== 0
+        Number(r.contact_vehicle_id || 0) !== 0 &&
+        r.contact_id != null
     );
 
     return res.json({
@@ -2171,9 +2395,9 @@ exports.getAvailableStock = async (req, res) => {
         linked,
         unlinked,
         other_visible: otherVisible,
-        all: allRows,
+        all: [...linked, ...unlinked, ...otherVisible],
         summary: {
-          total: allRows.length,
+          total: linked.length + unlinked.length + otherVisible.length,
           linked: linked.length,
           unlinked: unlinked.length,
           other_visible: otherVisible.length,
