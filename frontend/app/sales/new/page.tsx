@@ -39,12 +39,17 @@ type VehicleRow = {
   is_sold?: number | null;
   sold_sale_id?: number | null;
   is_linked?: number | null;
+  contact_vehicle_id?: number | null;
+  is_selected_contact_vehicle?: number | null;
 };
 
 type StockApiRow = {
   stock_item_id: number;
+  sale_id?: number | null;
   contact_vehicle_id?: number | null;
   contact_id?: number | null;
+  model_id?: number | null;
+  variant_id?: number | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
   model_name?: string | null;
@@ -55,6 +60,21 @@ type StockApiRow = {
   stock_status?: string | null;
   is_sold?: number | null;
   sold_sale_id?: number | null;
+  is_linked?: number | null;
+  is_selected_contact_vehicle?: number | null;
+};
+
+type AvailableStockResponse = {
+  linked: StockApiRow[];
+  unlinked: StockApiRow[];
+  other_visible: StockApiRow[];
+  all: StockApiRow[];
+  summary?: {
+    total: number;
+    linked: number;
+    unlinked: number;
+    other_visible: number;
+  };
 };
 
 type SalesTraceRow = {
@@ -298,7 +318,20 @@ export default function NewSalePage() {
   const [vq, setVq] = useState("");
   const dvq = useDebounced(vq, 250);
 
-  const [vehicles, setVehicles] = useState<VehicleRow[]>([]);
+  const [vehicleGroups, setVehicleGroups] = useState<{
+    linked: VehicleRow[];
+    unlinked: VehicleRow[];
+    otherVisible: VehicleRow[];
+    all: VehicleRow[];
+    summary: { total: number; linked: number; unlinked: number; other_visible: number };
+  }>({
+    linked: [],
+    unlinked: [],
+    otherVisible: [],
+    all: [],
+    summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+  });
+
   const [vehicleLoading, setVehicleLoading] = useState(false);
 
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleRow | null>(null);
@@ -326,12 +359,20 @@ export default function NewSalePage() {
       is_sold: isSold ? 1 : 0,
       sold_sale_id: r.sold_sale_id ?? null,
       is_linked: r.contact_vehicle_id ? 1 : 0,
+      contact_vehicle_id: r.contact_vehicle_id ?? null,
+      is_selected_contact_vehicle: r.is_selected_contact_vehicle ?? null,
     };
   };
 
   const fetchVehicles = async (q: string) => {
     if (!contactId) {
-      setVehicles([]);
+      setVehicleGroups({
+        linked: [],
+        unlinked: [],
+        otherVisible: [],
+        all: [],
+        summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+      });
       return;
     }
 
@@ -347,14 +388,38 @@ export default function NewSalePage() {
 
       const res = await api.get("/api/sales/available-stock", { params });
 
-      const rows: StockApiRow[] = Array.isArray(res.data)
-        ? res.data
-        : res.data?.data || [];
+      const payload: AvailableStockResponse =
+        res.data?.data || {
+          linked: [],
+          unlinked: [],
+          other_visible: [],
+          all: [],
+          summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+        };
 
-      setVehicles((rows || []).map(normalizeVehicleRow));
+      const normalizeList = (rows?: StockApiRow[]) => (rows || []).map(normalizeVehicleRow);
+
+      setVehicleGroups({
+        linked: normalizeList(payload.linked),
+        unlinked: normalizeList(payload.unlinked),
+        otherVisible: normalizeList(payload.other_visible),
+        all: normalizeList(payload.all),
+        summary: payload.summary || {
+          total: 0,
+          linked: 0,
+          unlinked: 0,
+          other_visible: 0,
+        },
+      });
     } catch (e: any) {
       console.error("fetchVehicles error:", e);
-      setVehicles([]);
+      setVehicleGroups({
+        linked: [],
+        unlinked: [],
+        otherVisible: [],
+        all: [],
+        summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+      });
       setErr(e?.response?.data?.message || "Failed to load vehicles");
     } finally {
       setVehicleLoading(false);
@@ -363,11 +428,23 @@ export default function NewSalePage() {
 
   useEffect(() => {
     if (!contactId) {
-      setVehicles([]);
+      setVehicleGroups({
+        linked: [],
+        unlinked: [],
+        otherVisible: [],
+        all: [],
+        summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+      });
       return;
     }
     fetchVehicles(dvq.trim()).catch(() => {
-      setVehicles([]);
+      setVehicleGroups({
+        linked: [],
+        unlinked: [],
+        otherVisible: [],
+        all: [],
+        summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+      });
     });
   }, [dvq, contactId, searchAllVehicles]);
 
@@ -493,7 +570,13 @@ export default function NewSalePage() {
     setAddress("");
 
     setVq("");
-    setVehicles([]);
+    setVehicleGroups({
+      linked: [],
+      unlinked: [],
+      otherVisible: [],
+      all: [],
+      summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+    });
     setErr("");
   };
 
@@ -623,6 +706,62 @@ export default function NewSalePage() {
   const lockedVehicleModel = vehicleLabel || "";
   const lockedChassis = selectedVehicle?.chassis_number || "";
   const lockedEngine = selectedVehicle?.engine_number || "";
+
+  const renderVehicleRows = (rows: VehicleRow[], groupLabel: string) => {
+    if (!rows.length) return null;
+
+    return rows.map((v) => {
+      const isSold =
+        Number(v.is_sold || 0) === 1 ||
+        String(v.stock_status || "").toLowerCase() === "sold";
+
+      return (
+        <tr key={`${groupLabel}-${v.stock_item_id}-${v.id}`} className="border-t hover:bg-gray-50">
+          <td className="p-3 font-mono whitespace-nowrap">{v.stock_item_id || "-"}</td>
+          <td className="p-3">{v.model_name || v.vehicle_model || "-"}</td>
+          <td className="p-3">{v.variant_name || "-"}</td>
+          <td className="p-3 font-mono break-all">{v.chassis_number || "-"}</td>
+          <td className="p-3 font-mono break-all">{v.engine_number || "-"}</td>
+          <td className="p-3 whitespace-nowrap">
+            {groupLabel === "linked" ? (
+              <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                Same Customer
+              </span>
+            ) : groupLabel === "unlinked" ? (
+              <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                Unlinked
+              </span>
+            ) : (
+              <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">
+                Linked Visible
+              </span>
+            )}
+          </td>
+          <td className="p-3 whitespace-nowrap">
+            {isSold ? (
+              <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">
+                SOLD{v.sold_sale_id ? ` (#${v.sold_sale_id})` : ""}
+              </span>
+            ) : (
+              <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">
+                Available
+              </span>
+            )}
+          </td>
+          <td className="p-3 text-right whitespace-nowrap">
+            <button
+              className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
+              type="button"
+              disabled={isSold || !v.stock_item_id}
+              onClick={() => pickVehicle(v)}
+            >
+              Pick
+            </button>
+          </td>
+        </tr>
+      );
+    });
+  };
 
   return (
     <AuthGuard>
@@ -841,11 +980,22 @@ export default function NewSalePage() {
             {!contactId ? (
               <div className="mt-2 text-sm text-amber-700">Select a customer first.</div>
             ) : vehiclePicked && selectedVehicle ? (
-              <div className="mt-3 p-3 rounded-lg border bg-blue-50 border-blue-200 text-sm">
-                Selected: <b>{vehicleLabel || "Vehicle"}</b> • Stock ID:{" "}
-                <b className="font-mono">{selectedVehicle.stock_item_id}</b> • Chassis:{" "}
-                <b className="font-mono break-all">{selectedVehicle.chassis_number}</b> • Engine:{" "}
-                <b className="font-mono break-all">{selectedVehicle.engine_number}</b>
+              <div className="mt-3">
+                <div className="p-3 rounded-lg border bg-blue-50 border-blue-200 text-sm">
+                  Selected: <b>{vehicleLabel || "Vehicle"}</b> • Stock ID:{" "}
+                  <b className="font-mono">{selectedVehicle.stock_item_id}</b> • Chassis:{" "}
+                  <b className="font-mono break-all">{selectedVehicle.chassis_number}</b> • Engine:{" "}
+                  <b className="font-mono break-all">{selectedVehicle.engine_number}</b>
+                </div>
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={clearVehicle}
+                    className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50"
+                  >
+                    Change Vehicle
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -856,85 +1006,84 @@ export default function NewSalePage() {
                     placeholder="Search vehicle..."
                   />
                 </div>
-<div className="mt-3 border rounded-xl overflow-hidden">
-  <table className="w-full text-sm">
-    <thead className="bg-gray-50">
-      <tr>
-        <th className="p-3 text-left">Stock ID</th>
-        <th className="p-3 text-left">Model</th>
-        <th className="p-3 text-left">Variant</th>
-        <th className="p-3 text-left">Chassis</th>
-        <th className="p-3 text-left">Engine</th>
-        <th className="p-3 text-left">Link</th>
-        <th className="p-3 text-left">Status</th>
-        <th className="p-3 text-right">Pick</th>
-      </tr>
-    </thead>
-    <tbody>
-      {vehicleLoading ? (
-        <tr>
-          <td colSpan={8} className="p-4 text-gray-500">
-            Loading...
-          </td>
-        </tr>
-      ) : vehicles.length === 0 ? (
-        <tr>
-          <td colSpan={8} className="p-4 text-gray-500">
-            No vehicles found.
-          </td>
-        </tr>
-      ) : (
-        vehicles.map((v) => {
-          const isSold =
-            Number(v.is_sold || 0) === 1 ||
-            String(v.stock_status || "").toLowerCase() === "sold";
 
-          return (
-            <tr key={`${v.stock_item_id}-${v.id}`} className="border-t hover:bg-gray-50">
-              <td className="p-3 font-mono whitespace-nowrap">{v.stock_item_id || "-"}</td>
-              <td className="p-3">{v.model_name || v.vehicle_model || "-"}</td>
-              <td className="p-3">{v.variant_name || "-"}</td>
-              <td className="p-3 font-mono break-all">{v.chassis_number}</td>
-              <td className="p-3 font-mono break-all">{v.engine_number}</td>
-              <td className="p-3 whitespace-nowrap">
-                {v.is_linked ? (
-                  <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
-                    Linked
-                  </span>
-                ) : (
-                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-                    Unlinked
-                  </span>
-                )}
-              </td>
-              <td className="p-3 whitespace-nowrap">
-                {isSold ? (
-                  <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">
-                    SOLD{v.sold_sale_id ? ` (#${v.sold_sale_id})` : ""}
-                  </span>
-                ) : (
-                  <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">
-                    Available
-                  </span>
-                )}
-              </td>
-              <td className="p-3 text-right whitespace-nowrap">
-                <button
-                  className="px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 disabled:opacity-50"
-                  type="button"
-                  disabled={isSold || !v.stock_item_id}
-                  onClick={() => pickVehicle(v)}
-                >
-                  Pick
-                </button>
-              </td>
-            </tr>
-          );
-        })
-      )}
-    </tbody>
-  </table>
-</div>
+                <div className="mt-3">
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="px-2 py-1 rounded bg-blue-100 text-blue-700">
+                      Linked: {vehicleGroups.summary.linked}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-gray-100 text-gray-700">
+                      Unlinked: {vehicleGroups.summary.unlinked}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-amber-100 text-amber-700">
+                      Other visible: {vehicleGroups.summary.other_visible}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-green-100 text-green-700">
+                      Total: {vehicleGroups.summary.total}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-3 border rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="p-3 text-left">Stock ID</th>
+                        <th className="p-3 text-left">Model</th>
+                        <th className="p-3 text-left">Variant</th>
+                        <th className="p-3 text-left">Chassis</th>
+                        <th className="p-3 text-left">Engine</th>
+                        <th className="p-3 text-left">Link</th>
+                        <th className="p-3 text-left">Status</th>
+                        <th className="p-3 text-right">Pick</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vehicleLoading ? (
+                        <tr>
+                          <td colSpan={8} className="p-4 text-gray-500">
+                            Loading...
+                          </td>
+                        </tr>
+                      ) : vehicleGroups.all.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="p-4 text-gray-500">
+                            No vehicles found.
+                          </td>
+                        </tr>
+                      ) : (
+                        <>
+                          {vehicleGroups.linked.length > 0 && (
+                            <tr className="border-t bg-blue-50">
+                              <td colSpan={8} className="p-3 font-semibold text-blue-800">
+                                Vehicles already linked to selected customer
+                              </td>
+                            </tr>
+                          )}
+                          {renderVehicleRows(vehicleGroups.linked, "linked")}
+
+                          {vehicleGroups.unlinked.length > 0 && (
+                            <tr className="border-t bg-gray-50">
+                              <td colSpan={8} className="p-3 font-semibold text-gray-800">
+                                Unlinked stock vehicles
+                              </td>
+                            </tr>
+                          )}
+                          {renderVehicleRows(vehicleGroups.unlinked, "unlinked")}
+
+                          {vehicleGroups.otherVisible.length > 0 && (
+                            <tr className="border-t bg-amber-50">
+                              <td colSpan={8} className="p-3 font-semibold text-amber-800">
+                                Other visible linked rows
+                              </td>
+                            </tr>
+                          )}
+                          {renderVehicleRows(vehicleGroups.otherVisible, "other")}
+                        </>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </>
             )}
           </div>

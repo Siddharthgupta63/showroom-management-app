@@ -1,4 +1,3 @@
-// backend/controllers/salesController.js
 const db = require("../db");
 const multer = require("multer");
 const fs = require("fs");
@@ -211,6 +210,7 @@ async function restoreStockItemToInStock(conn, stockItemId) {
     [id]
   );
 }
+
 // =====================================================
 // Snapshot helpers (HSRP/RC column-safe)
 // =====================================================
@@ -870,7 +870,7 @@ exports.getAllSales = async (req, res) => {
          s.engine_number,
          s.contact_id,
          s.contact_vehicle_id,
-        s.stock_item_id,
+         s.stock_item_id,
          s.branch_id,
          b.branch_name,
          s.created_at,
@@ -951,7 +951,6 @@ exports.createSale = async (req, res) => {
         contact.full_name ||
         [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim();
 
-      // lock + validate stock
       const stock = await assertStockItemAssignable(conn, {
         stockItemId,
         contactVehicleId: vehicleId || null,
@@ -961,9 +960,6 @@ exports.createSale = async (req, res) => {
       let finalVehicleId = vehicleId || (stock.contact_vehicle_id ? Number(stock.contact_vehicle_id) : null);
       let vehicle = null;
 
-      // -------------------------------------------------
-      // AUTO-LINK for unlinked picked stock
-      // -------------------------------------------------
       if (!finalVehicleId) {
         const modelId = stock.model_id ? Number(stock.model_id) : null;
         const variantId = stock.variant_id ? Number(stock.variant_id) : null;
@@ -996,7 +992,6 @@ exports.createSale = async (req, res) => {
         const chassis = safeText(stock.chassis_number);
         const engine = safeText(stock.engine_number);
 
-        // 1) Try to reuse existing vehicle by chassis first, then engine
         let existingVehicle = null;
 
         if (chassis) {
@@ -1032,7 +1027,6 @@ exports.createSale = async (req, res) => {
         if (existingVehicle) {
           finalVehicleId = Number(existingVehicle.id);
 
-          // If unlinked, attach to selected contact
           if (!existingVehicle.contact_id) {
             await conn.query(
               `
@@ -1044,7 +1038,6 @@ exports.createSale = async (req, res) => {
             );
           }
 
-          // If already linked to another contact, block
           if (
             existingVehicle.contact_id &&
             Number(existingVehicle.contact_id) !== Number(contactId)
@@ -1054,7 +1047,6 @@ exports.createSale = async (req, res) => {
             throw err;
           }
 
-          // Ensure stock row points to reused vehicle
           await conn.query(
             `
             UPDATE vehicle_purchase_items
@@ -1064,7 +1056,6 @@ exports.createSale = async (req, res) => {
             [finalVehicleId, stockItemId]
           );
         } else {
-          // 2) No existing vehicle found -> create new one
           const autoVehiclePayload = {
             contact_id: contactId,
             model_id: modelId,
@@ -1265,6 +1256,7 @@ exports.createSale = async (req, res) => {
     return res.status(500).json({ success: false, message: err?.message || "Server error" });
   }
 };
+
 // =====================================================
 // GET /api/sales/:id
 // =====================================================
@@ -1487,33 +1479,32 @@ exports.updateSale = async (req, res) => {
       branch_id: branchId,
     };
 
-const oldVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
-const oldStockItemId = cur.stock_item_id ? Number(cur.stock_item_id) : null;
+    const oldVehicleId = cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null;
+    const oldStockItemId = cur.stock_item_id ? Number(cur.stock_item_id) : null;
 
-const finalVehicleId = hydrated?.contact_vehicle_id
-  ? Number(hydrated.contact_vehicle_id)
-  : (cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null);
+    const finalVehicleId = hydrated?.contact_vehicle_id
+      ? Number(hydrated.contact_vehicle_id)
+      : (cur.contact_vehicle_id ? Number(cur.contact_vehicle_id) : null);
 
-const finalContactId = hydrated?.contact_id
-  ? Number(hydrated.contact_id)
-  : (cur.contact_id ? Number(cur.contact_id) : null);
+    const finalContactId = hydrated?.contact_id
+      ? Number(hydrated.contact_id)
+      : (cur.contact_id ? Number(cur.contact_id) : null);
 
-const finalStockItemId = newStockItemId ? Number(newStockItemId) : null;
+    const finalStockItemId = newStockItemId ? Number(newStockItemId) : null;
 
-// ✅ validate stock BEFORE updating sales
-if (finalStockItemId) {
-  await assertStockItemAssignable(conn, {
-    stockItemId: finalStockItemId,
-    contactVehicleId: finalVehicleId,
-    excludeSaleId: id,
-  });
-}
+    if (finalStockItemId) {
+      await assertStockItemAssignable(conn, {
+        stockItemId: finalStockItemId,
+        contactVehicleId: finalVehicleId,
+        excludeSaleId: id,
+      });
+    }
 
-const cols = Object.keys(updates).filter((k) => k !== undefined);
-const setSql = cols.map((c) => `${c} = ?`).join(", ");
-const vals = cols.map((k) => updates[k]);
+    const cols = Object.keys(updates).filter((k) => k !== undefined);
+    const setSql = cols.map((c) => `${c} = ?`).join(", ");
+    const vals = cols.map((k) => updates[k]);
 
-await conn.query(`UPDATE sales SET ${setSql} WHERE id = ?`, [...vals, id]);
+    await conn.query(`UPDATE sales SET ${setSql} WHERE id = ?`, [...vals, id]);
 
     if (oldStockItemId && (!finalStockItemId || Number(oldStockItemId) !== Number(finalStockItemId))) {
       await restoreStockItemToInStock(conn, oldStockItemId);
@@ -1602,8 +1593,6 @@ await conn.query(`UPDATE sales SET ${setSql} WHERE id = ?`, [...vals, id]);
 };
 
 // =====================================================
-
-// =====================================================
 exports.cancelSale = async (req, res) => {
   const conn = await db.getConnection();
   try {
@@ -1663,7 +1652,6 @@ exports.cancelSale = async (req, res) => {
     conn.release();
   }
 };
-
 
 // =====================================================
 // Upload Sale Documents
@@ -2051,12 +2039,10 @@ exports.deleteSale = async (req, res) => {
 
     const stockItemId = rows[0].stock_item_id;
 
-    // 🔁 Restore stock
     if (stockItemId) {
-  await restoreStockItemToInStock(conn, stockItemId);
-}
+      await restoreStockItemToInStock(conn, stockItemId);
+    }
 
-    // 🗑️ Delete sale
     await conn.query(`DELETE FROM sales WHERE id = ?`, [saleId]);
 
     await conn.commit();
@@ -2088,14 +2074,10 @@ exports.getAvailableStock = async (req, res) => {
     const params = [contactId];
     const where = [];
 
-    // ✅ IMPORTANT:
-    // show only:
-    // 1) linked to selected contact
-    // 2) unlinked
-    // hide stock linked to some other contact
     where.push(`(cv.id IS NULL OR cv.contact_id = ?)`);
 
     if (q) {
+      const like = `%${q}%`;
       where.push(`
         (
           COALESCE(cv.vehicle_model, vm.model_name, '') LIKE ?
@@ -2106,13 +2088,11 @@ exports.getAvailableStock = async (req, res) => {
           OR CAST(vpi.id AS CHAR) LIKE ?
         )
       `);
-      const like = `%${q}%`;
       params.push(like, like, like, like, like, like);
     }
 
-    // default: only available rows
     if (!includeSold) {
-      where.push(`LOWER(COALESCE(vpi.status_code, '')) = 'in_stock'`);
+      where.push(`LOWER(COALESCE(vpi.status_code, '')) IN ('in_stock', 'booked')`);
       where.push(`vpi.sale_id IS NULL`);
     }
 
@@ -2126,8 +2106,11 @@ exports.getAvailableStock = async (req, res) => {
         cv.contact_id,
 
         vpi.id AS stock_item_id,
+        vpi.sale_id,
+        vpi.model_id,
+        vpi.variant_id,
 
-        COALESCE(cv.vehicle_make, 'HERO') AS vehicle_make,
+        COALESCE(cv.vehicle_make, 'Hero') AS vehicle_make,
         COALESCE(cv.vehicle_model, vm.model_name, '') AS vehicle_model,
         vm.model_name AS model_name,
         COALESCE(vv.variant_name, '') AS variant_name,
@@ -2136,7 +2119,7 @@ exports.getAvailableStock = async (req, res) => {
         COALESCE(vpi.engine_number, cv.engine_number, '') AS engine_number,
         COALESCE(vpi.color, cv.color, '') AS color,
 
-        vpi.status_code AS stock_status,
+        LOWER(COALESCE(vpi.status_code, 'in_stock')) AS stock_status,
         CASE
           WHEN LOWER(COALESCE(vpi.status_code, '')) = 'sold' OR vpi.sale_id IS NOT NULL THEN 1
           ELSE 0
@@ -2164,19 +2147,38 @@ exports.getAvailableStock = async (req, res) => {
       ${whereSql}
 
       ORDER BY
-        is_selected_contact_vehicle DESC,
-        CASE WHEN cv.id IS NULL THEN 0 ELSE 1 END ASC,
-        CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'in_stock' AND vpi.sale_id IS NULL THEN 0 ELSE 1 END ASC,
+        CASE WHEN cv.contact_id = ? THEN 0 ELSE 1 END,
+        CASE WHEN cv.id IS NULL THEN 0 ELSE 1 END,
+        CASE WHEN LOWER(COALESCE(vpi.status_code, '')) IN ('in_stock', 'booked') AND vpi.sale_id IS NULL THEN 0 ELSE 1 END,
         vpi.id DESC
-
-      LIMIT 300
       `,
-      [contactId, ...params]
+      [contactId, ...params, contactId]
+    );
+
+    const allRows = Array.isArray(rows) ? rows : [];
+
+    const linked = allRows.filter((r) => Number(r.is_selected_contact_vehicle) === 1);
+    const unlinked = allRows.filter((r) => !Number(r.contact_vehicle_id || 0));
+    const otherVisible = allRows.filter(
+      (r) =>
+        Number(r.is_selected_contact_vehicle) !== 1 &&
+        Number(r.contact_vehicle_id || 0) !== 0
     );
 
     return res.json({
       success: true,
-      data: rows || [],
+      data: {
+        linked,
+        unlinked,
+        other_visible: otherVisible,
+        all: allRows,
+        summary: {
+          total: allRows.length,
+          linked: linked.length,
+          unlinked: unlinked.length,
+          other_visible: otherVisible.length,
+        },
+      },
     });
   } catch (err) {
     console.error("getAvailableStock error:", err);
