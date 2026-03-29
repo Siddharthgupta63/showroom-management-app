@@ -3,6 +3,7 @@ const router = express.Router();
 
 const { authMiddleware } = require("../middleware/authMiddleware");
 const stock = require("../controllers/vehicleStockController");
+const salesController = require("../controllers/salesController");
 
 function requireOwnerAdminManager(req, res, next) {
   const role = String(req.user?.role || "").toLowerCase();
@@ -18,8 +19,11 @@ function requireOwnerAdmin(req, res, next) {
 
 router.use(authMiddleware);
 
-// stock list
+// ✅ full stock list for stock page
 router.get("/", stock.listStock);
+
+// ✅ available stock for sales/vehicle selection
+router.get("/available", salesController.getAvailableStock);
 
 // create purchase / challan / import-entry
 router.post("/purchase", requireOwnerAdminManager, stock.createPurchase);

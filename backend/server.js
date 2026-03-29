@@ -9,7 +9,7 @@ const { ensureViews } = require("./utils/ensureViews");
 const hsrpRoutes = require("./routes/hsrp");
 const rcRoutes = require("./routes/rc");
 const vehicleStockRoutes = require("./routes/vehicleStock");
-const stockRoutes = require("./routes/stock");
+// const stockRoutes = require("./routes/stock"); // ❌ do not mount duplicate /api/stock router
 
 dotenv.config(); // load env first
 
@@ -50,8 +50,10 @@ app.use("/api/admin", require("./routes/admin"));
 app.use("/api/sales", require("./routes/sales"));
 app.use("/api/contacts", require("./routes/contacts"));
 app.use("/api/vehicles", require("./routes/vehicles"));
+
+// ✅ single stock router only
 app.use("/api/stock", vehicleStockRoutes);
-app.use("/api/stock", stockRoutes);
+
 app.use("/api/vahan", require("./routes/vahan"));
 app.use("/api/hsrp", hsrpRoutes);
 app.use("/api/rc", rcRoutes);
@@ -76,7 +78,6 @@ app.use("/api/pipeline", require("./routes/pipeline"));
 
 // ✅ WhatsApp Logs APIs
 app.use("/api/whatsapp", require("./routes/whatsappLogs"));
-
 
 // ✅ Dropdown master APIs
 try {
