@@ -454,34 +454,104 @@ exports.deactivatePhone = async (req, res) => {
 // ---------- add vehicle ----------
 exports.addVehicle = async (req, res) => {
   try {
-    const contactId = Number(req.params.id);
-    if (!contactId) return res.status(400).json({ success: false, message: "Invalid contact id" });
+    const {
+      contact_id,
+      chassis_number,
+      engine_number,
+      rto_number,
+      model_id,
+      variant_id,
+    } = req.body;
 
-    const { chassis_number, engine_number, rto_number, model_id, variant_id } = req.body || {};
-    const chassis = String(chassis_number || "").trim();
-    const engine = String(engine_number || "").trim();
-    const rtoNumber = String(rto_number || "").trim();
-
-    if (!chassis) return res.status(400).json({ success: false, message: "Chassis number is required" });
-    if (!engine) return res.status(400).json({ success: false, message: "Engine number is required" });
-
-    await db.query(
-      `INSERT INTO contact_vehicles (contact_id, chassis_number, engine_number, rto_number, model_id, variant_id)
-       VALUES (?,?,?,?,?,?)`,
-      [contactId, chassis, engine, safeText(rtoNumber), model_id || null, variant_id || null]
-    );
-
-    const data = await fetchContactById(contactId);
-    return res.status(201).json({ success: true, data });
-  } catch (e) {
-    console.error("addVehicle:", e);
-    if (String(e?.code) === "ER_DUP_ENTRY") {
-      return res.status(409).json({
-        success: false,
-        message: "Duplicate chassis/engine found. This vehicle is already assigned to another contact.",
-      });
+    if (!contact_id) {
+      return res.status(400).json({ success: false, message: "contact_id required" });
     }
-    return res.status(500).json({ success: false, message: "Server error" });
+
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // -------------------------------------------------
+      // 1. Check existing vehicle by chassis
+      // -------------------------------------------------
+      let existing = null;
+
+      if (chassis_number) {
+        const [rows] = await conn.query(
+          `SELECT * FROM contact_vehicles WHERE chassis_number = ? LIMIT 1 FOR UPDATE`,
+          [chassis_number]
+        );
+        existing = rows?.[0] || null;
+      }
+
+      if (!existing && engine_number) {
+        const [rows] = await conn.query(
+          `SELECT * FROM contact_vehicles WHERE engine_number = ? LIMIT 1 FOR UPDATE`,
+          [engine_number]
+        );
+        existing = rows?.[0] || null;
+      }
+
+      let vehicleId;
+
+      if (existing) {
+        vehicleId = existing.id;
+
+        // If vehicle not linked → attach to contact
+        if (!existing.contact_id) {
+          await conn.query(
+            `UPDATE contact_vehicles SET contact_id = ? WHERE id = ?`,
+            [contact_id, vehicleId]
+          );
+        }
+
+        // If linked to another contact → block
+        if (
+          existing.contact_id &&
+          Number(existing.contact_id) !== Number(contact_id)
+        ) {
+          await conn.rollback();
+          return res.status(409).json({
+            success: false,
+            message: "Vehicle already linked to another customer",
+          });
+        }
+      } else {
+        // -------------------------------------------------
+        // 2. Create new vehicle
+        // -------------------------------------------------
+        const [ins] = await conn.query(
+          `INSERT INTO contact_vehicles 
+          (contact_id, chassis_number, engine_number, rto_number, model_id, variant_id)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            contact_id,
+            chassis_number || null,
+            engine_number || null,
+            rto_number || null,
+            model_id || null,
+            variant_id || null,
+          ]
+        );
+
+        vehicleId = ins.insertId;
+      }
+
+      await conn.commit();
+
+      return res.json({
+        success: true,
+        data: { id: vehicleId },
+      });
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    console.error("addVehicle error:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
