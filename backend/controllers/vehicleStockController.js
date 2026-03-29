@@ -112,8 +112,6 @@ async function ensureVehicleItemExists(itemId) {
 // =====================================================
 exports.listStock = async (req, res) => {
   try {
-    const { page, pageSize, offset } = getPageParams(req);
-
     const q = normalizeStr(req.query.q);
     const status_code = normalizeStr(req.query.status_code);
     const model_id = parseNullableNumber(req.query.model_id);
@@ -122,9 +120,12 @@ exports.listStock = async (req, res) => {
     const entry_type = normalizeStr(req.query.entry_type);
     const branch_id = parseNullableNumber(req.query.branch_id);
     const purchase_from = normalizeStr(req.query.purchase_from);
-    const invoice_pending = req.query.invoice_pending === undefined
-      ? null
-      : Number(req.query.invoice_pending) === 1 ? 1 : 0;
+    const invoice_pending =
+      req.query.invoice_pending === undefined
+        ? null
+        : Number(req.query.invoice_pending) === 1
+        ? 1
+        : 0;
 
     const date_from = parseNullableDate(req.query.date_from);
     const date_to = parseNullableDate(req.query.date_to);
@@ -183,11 +184,15 @@ exports.listStock = async (req, res) => {
       params.push(invoice_pending);
     }
     if (date_from) {
-      where.push(`DATE(COALESCE(vp.received_date, vp.document_date, vp.purchase_date, vp.invoice_date, vp.created_at)) >= ?`);
+      where.push(`
+        DATE(COALESCE(vp.received_date, vp.document_date, vp.purchase_date, vp.invoice_date, vp.created_at)) >= ?
+      `);
       params.push(date_from);
     }
     if (date_to) {
-      where.push(`DATE(COALESCE(vp.received_date, vp.document_date, vp.purchase_date, vp.invoice_date, vp.created_at)) <= ?`);
+      where.push(`
+        DATE(COALESCE(vp.received_date, vp.document_date, vp.purchase_date, vp.invoice_date, vp.created_at)) <= ?
+      `);
       params.push(date_to);
     }
 
@@ -251,12 +256,15 @@ exports.listStock = async (req, res) => {
         sb.branch_name AS branch_name
       ${fromSql}
       ORDER BY vpi.id DESC
-      LIMIT ? OFFSET ?
       `,
-      [...params, pageSize, offset]
+      params
     );
 
-    return res.json({ success: true, data: rows, page, pageSize, total });
+    return res.json({
+      success: true,
+      data: rows,
+      total,
+    });
   } catch (e) {
     console.error("stock listStock:", e);
     return res.status(500).json({ success: false, message: "Server error" });
