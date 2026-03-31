@@ -26,11 +26,11 @@ function csvEscape(value) {
 }
 
 function hsrpStatusOf(row) {
-  const hasNumber = !!String(row.hsrp_number || "").trim();
+  const hasOrderDate = !!String(row.hsrp_issued_date || "").trim();
   const plateReceived = toBool(row.plate_received);
   const installed = toBool(row.hsrp_installed);
 
-  if (!hasNumber) return "Pending Order";
+  if (!hasOrderDate) return "Pending Order";
   if (!plateReceived) return "Ordered";
   if (!installed) return "Plate Received / Fitment Pending";
   return "Fitment Done";
@@ -203,7 +203,7 @@ async function fetchHSRPRows({ fromDate, toDate, search, status }) {
       fitment_by_name: r.fitment_by_name || "",
       notes: r.notes || "",
       status: hsrpStatusOf({
-        hsrp_number: finalHsrpNumber,
+        hsrp_issued_date: r.hsrp_issued_date,
         plate_received: r.plate_received,
         hsrp_installed: r.hsrp_installed,
       }),
@@ -217,6 +217,7 @@ async function fetchHSRPRows({ fromDate, toDate, search, status }) {
 
   return data;
 }
+
 const getHSRPRequests = async (req, res) => {
   try {
     const fromDate = cleanStr(req.query.from_date);
@@ -384,7 +385,7 @@ const createHSRPRequest = async (req, res) => {
       return res.status(400).json({ message: "Amount paid is required" });
     }
 
-        if (fitment_by) {
+    if (fitment_by) {
       const [userRows] = await db.query(
         `SELECT id, name, username FROM users WHERE id = ? LIMIT 1`,
         [fitment_by]
@@ -427,7 +428,7 @@ const createHSRPRequest = async (req, res) => {
       ]
     );
 
-        await db.query(
+    await db.query(
       `
       UPDATE hsrp_fitment
       SET
