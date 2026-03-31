@@ -13,7 +13,8 @@ async function ensureContactVehicleLink({
   const [rows] = await connection.query(
     `SELECT id, contact_vehicle_id, chassis_number, engine_number
      FROM vehicle_purchase_items
-     WHERE id = ?`,
+     WHERE id = ?
+     LIMIT 1`,
     [stockItemId]
   );
 
@@ -23,33 +24,71 @@ async function ensureContactVehicleLink({
 
   const stock = rows[0];
 
-  // 2. If already linked properly → return
+  // 2. If stock already linked, reuse that row safely
   if (stock.contact_vehicle_id) {
     const [cvRows] = await connection.query(
-      `SELECT id, contact_id FROM contact_vehicles WHERE id = ?`,
+      `SELECT id, contact_id, is_deleted
+       FROM contact_vehicles
+       WHERE id = ?
+       LIMIT 1`,
       [stock.contact_vehicle_id]
     );
 
-    if (cvRows.length && cvRows[0].contact_id) {
-      return stock.contact_vehicle_id;
+    if (cvRows.length) {
+      const cv = cvRows[0];
+
+      if (Number(cv.is_deleted || 0) === 1) {
+        throw new Error("Linked vehicle is deleted");
+      }
+
+      if (!cv.contact_id) {
+        await connection.query(
+          `UPDATE contact_vehicles
+           SET contact_id = ?
+           WHERE id = ?`,
+          [contactId, cv.id]
+        );
+      } else if (Number(cv.contact_id) !== Number(contactId)) {
+        const err = new Error("This vehicle is already linked to another customer");
+        err.statusCode = 409;
+        throw err;
+      }
+
+      return cv.id;
     }
   }
 
-  // 3. Try find existing vehicle for this customer
-  const [existing] = await connection.query(
-    `SELECT id FROM contact_vehicles
-     WHERE contact_id = ?
-     AND chassis_number = ?
+  // 3. Find existing vehicle globally by unique chassis/engine
+  const [existingRows] = await connection.query(
+    `SELECT id, contact_id, is_deleted
+     FROM contact_vehicles
+     WHERE (chassis_number = ? OR engine_number = ?)
+       AND is_deleted = 0
      LIMIT 1`,
-    [contactId, stock.chassis_number]
+    [stock.chassis_number, stock.engine_number]
   );
 
   let contactVehicleId;
 
-  if (existing.length) {
-    contactVehicleId = existing[0].id;
+  if (existingRows.length) {
+    const existing = existingRows[0];
+
+    if (!existing.contact_id) {
+      await connection.query(
+        `UPDATE contact_vehicles
+         SET contact_id = ?
+         WHERE id = ?`,
+        [contactId, existing.id]
+      );
+    } else if (Number(existing.contact_id) !== Number(contactId)) {
+      const err = new Error("This vehicle is already linked to another customer");
+      err.statusCode = 409;
+      throw err;
+    }
+
+    contactVehicleId = existing.id;
   } else {
-    // 4. Create new contact vehicle
+    // 4. Create only when vehicle truly does not exist
     const [insert] = await connection.query(
       `INSERT INTO contact_vehicles
        (contact_id, chassis_number, engine_number, created_at)
