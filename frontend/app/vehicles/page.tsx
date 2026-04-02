@@ -38,16 +38,17 @@ export default function VehiclesPage() {
     setRole(String(u?.role || "").toLowerCase());
   }, []);
 
-  const isOwnerAdmin = role === "owner" || role === "admin";
+ const isOwnerAdmin = role === "owner" || role === "admin";
+const isManager = role === "manager";
 
-  const canView = true;
-  const canExport = isOwnerAdmin || hasPermission("export_excel");
-  const canImport = isOwnerAdmin || hasPermission("import_excel") || hasPermission("bulk_upload");
+const canView = true;
+const canExport = isOwnerAdmin || hasPermission("export_excel");
+const canImport = isOwnerAdmin || hasPermission("import_excel") || hasPermission("bulk_upload");
 
-  // ✅ changed: Add Vehicle visible for all staff
-  const canAddVehicle = true;
+// Only owner, admin, manager can see Add Vehicle
+const canAddVehicle = isOwnerAdmin || isManager;
 
-  const canDelete = isOwnerAdmin;
+const canDelete = isOwnerAdmin;
 
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<VehicleRow[]>([]);
