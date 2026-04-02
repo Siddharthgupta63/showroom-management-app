@@ -283,7 +283,16 @@ export default function PurchaseEditPage() {
   };
 
   const removeItem = (index: number) => {
+    if (items.length === 1) {
+      const ok = window.confirm(
+        "This is the only vehicle in this purchase. Removing it will delete the complete purchase. Continue?"
+      );
+      if (!ok) return;
+    }
+
     setItems((prev) => prev.filter((_, i) => i !== index));
+    setError("");
+    setSuccess("");
   };
 
   const duplicateInPage = useMemo(() => {
@@ -327,15 +336,11 @@ export default function PurchaseEditPage() {
         throw new Error("Purchase Date is required");
       }
 
-      if (!items.length) {
-        throw new Error("At least one item is required");
-      }
-
-      if (duplicateInPage.length) {
+      if (items.length > 0 && duplicateInPage.length) {
         throw new Error(duplicateInPage[0]);
       }
 
-      await api.put(`/api/purchases/${id}`, {
+      const res = await api.put(`/api/purchases/${id}`, {
         purchase_from: form.purchase_from,
         transporter_name: form.transporter_name || null,
         lr_number: form.lr_number || null,
@@ -355,6 +360,16 @@ export default function PurchaseEditPage() {
           variant_id: it.variant_id ? Number(it.variant_id) : null,
         })),
       });
+
+      const deletedPurchase = Boolean(res?.data?.deleted_purchase);
+
+      if (deletedPurchase) {
+        setSuccess("Purchase deleted successfully");
+        setTimeout(() => {
+          router.push("/purchases");
+        }, 700);
+        return;
+      }
 
       setSuccess("Purchase updated successfully");
 
@@ -412,7 +427,7 @@ export default function PurchaseEditPage() {
                   </div>
                 ) : null}
 
-                {duplicateInPage.length ? (
+                {items.length > 0 && duplicateInPage.length ? (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-sm">
                     {duplicateInPage[0]}
                   </div>
@@ -678,7 +693,6 @@ export default function PurchaseEditPage() {
                                   type="button"
                                   onClick={() => removeItem(idx)}
                                   className="px-3 py-1 border rounded hover:bg-gray-50"
-                                  disabled={items.length <= 1}
                                 >
                                   Remove
                                 </button>
@@ -688,7 +702,7 @@ export default function PurchaseEditPage() {
                         ) : (
                           <tr>
                             <td colSpan={8} className="px-3 py-4 text-gray-500">
-                              No items found.
+                              No items left. Saving now will delete the complete purchase.
                             </td>
                           </tr>
                         )}
@@ -703,7 +717,11 @@ export default function PurchaseEditPage() {
                     disabled={saving}
                     className="px-5 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
                   >
-                    {saving ? "Saving..." : "Save Changes"}
+                    {saving
+                      ? "Saving..."
+                      : items.length === 0
+                      ? "Delete Purchase"
+                      : "Save Changes"}
                   </button>
 
                   <Link

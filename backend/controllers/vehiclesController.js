@@ -569,19 +569,55 @@ exports.getVehicleSales = async (req, res) => {
 exports.deleteVehicle = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ success: false, message: "Invalid ID" });
-
-    const [linkedAny] = await db.query(`SELECT id FROM sales WHERE contact_vehicle_id = ? LIMIT 1`, [id]);
-    if (linkedAny.length) {
-      return res.status(400).json({ success: false, message: "Vehicle is linked to a sale. Cannot delete." });
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid ID" });
     }
 
-    const [linkedLinks] = await db.query(`SELECT id FROM sale_vehicle_links WHERE vehicle_id = ? LIMIT 1`, [id]);
+    // 1) Active / any sale direct link
+    const [linkedAny] = await db.query(
+      `SELECT id FROM sales WHERE contact_vehicle_id = ? LIMIT 1`,
+      [id]
+    );
+    if (linkedAny.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Vehicle is linked to a sale. Cannot delete.",
+      });
+    }
+
+    // 2) Sale history / mapping link
+    const [linkedLinks] = await db.query(
+      `SELECT id FROM sale_vehicle_links WHERE vehicle_id = ? LIMIT 1`,
+      [id]
+    );
     if (linkedLinks.length) {
-      return res.status(400).json({ success: false, message: "Vehicle is linked in sale history. Cannot delete." });
+      return res.status(400).json({
+        success: false,
+        message: "Vehicle is linked in sale history. Cannot delete.",
+      });
+    }
+
+    // 3) Purchase / stock link
+    const [purchaseLinks] = await db.query(
+      `
+      SELECT id, purchase_id, status_code, sale_id
+      FROM vehicle_purchase_items
+      WHERE contact_vehicle_id = ?
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (purchaseLinks.length) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Vehicle is linked to Purchase/Stock. Delete it from Purchase module instead.",
+      });
     }
 
     const userId = req.user?.id || null;
+
     const [upd] = await db.query(
       `
       UPDATE contact_vehicles
@@ -592,7 +628,10 @@ exports.deleteVehicle = async (req, res) => {
     );
 
     if (!upd.affectedRows) {
-      return res.status(404).json({ success: false, message: "Vehicle not found (or already deleted)" });
+      return res.status(404).json({
+        success: false,
+        message: "Vehicle not found (or already deleted)",
+      });
     }
 
     return res.json({ success: true });
