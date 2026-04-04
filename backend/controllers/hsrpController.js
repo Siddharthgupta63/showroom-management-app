@@ -1,6 +1,7 @@
 // backend/controllers/hsrpController.js
 
 const db = require("../db");
+const { getContactLinksFromSale } = require("../utils/saleLinkHelper");
 
 function toBool(v) {
   return Number(v || 0) === 1;
@@ -43,11 +44,21 @@ async function ensureHsrpRow(saleId, userId) {
   );
   if (rows.length) return rows[0];
 
+  const { contact_id, contact_vehicle_id } =
+    await getContactLinksFromSale(saleId);
+
   const [result] = await db.query(
     `INSERT INTO hsrp
-      (sale_id, hsrp_required, hsrp_uploaded_by, plate_received)
-     VALUES (?, 1, ?, 0)`,
-    [saleId, userId || null]
+      (
+        sale_id,
+        contact_id,
+        contact_vehicle_id,
+        hsrp_required,
+        hsrp_uploaded_by,
+        plate_received
+      )
+     VALUES (?, ?, ?, 1, ?, 0)`,
+    [saleId, contact_id, contact_vehicle_id, userId || null]
   );
 
   const [fresh] = await db.query(
@@ -64,11 +75,23 @@ async function ensureFitmentRow(saleId, userId) {
   );
   if (rows.length) return rows[0];
 
+  const { contact_id, contact_vehicle_id } =
+    await getContactLinksFromSale(saleId);
+
   const [result] = await db.query(
     `INSERT INTO hsrp_fitment
-      (sale_id, fitment_by, fitment_by_name, hsrp_installed, amount_paid, incentive_amount)
-     VALUES (?, ?, NULL, 0, 0, 0)`,
-    [saleId, userId || null]
+      (
+        sale_id,
+        contact_id,
+        contact_vehicle_id,
+        fitment_by,
+        fitment_by_name,
+        hsrp_installed,
+        amount_paid,
+        incentive_amount
+      )
+     VALUES (?, ?, ?, ?, NULL, 0, 0, 0)`,
+    [saleId, contact_id, contact_vehicle_id, userId || null]
   );
 
   const [fresh] = await db.query(
@@ -130,6 +153,8 @@ async function fetchHSRPRows({ fromDate, toDate, search, status }) {
       vs.rto_number,
 
       h.id AS hsrp_id,
+      h.contact_id,
+      h.contact_vehicle_id,
       h.hsrp_number,
       h.hsrp_issued_date,
       COALESCE(h.plate_received, 0) AS plate_received,
@@ -138,6 +163,8 @@ async function fetchHSRPRows({ fromDate, toDate, search, status }) {
       h.notes,
 
       hf.id AS fitment_id,
+      hf.contact_id AS fitment_contact_id,
+      hf.contact_vehicle_id AS fitment_contact_vehicle_id,
       COALESCE(hf.hsrp_installed, 0) AS hsrp_installed,
       hf.fitment_date,
       hf.amount_paid,
@@ -312,6 +339,8 @@ const createHSRPRequest = async (req, res) => {
       `
       SELECT
         s.id AS sale_id,
+        s.contact_id,
+        s.contact_vehicle_id,
         vs.application_number,
         COALESCE(vs.payment_done, 0) AS payment_done,
         vs.rto_number
@@ -343,6 +372,9 @@ const createHSRPRequest = async (req, res) => {
         message: "HSRP can be updated only after VAHAN is completed",
       });
     }
+
+    const { contact_id, contact_vehicle_id } =
+      await getContactLinksFromSale(saleId);
 
     const plateReceived = Number(req.body.plate_received || 0) === 1 ? 1 : 0;
     const installed = Number(req.body.hsrp_installed || 0) === 1 ? 1 : 0;
@@ -408,6 +440,8 @@ const createHSRPRequest = async (req, res) => {
       `
       UPDATE hsrp
       SET
+        contact_id = ?,
+        contact_vehicle_id = ?,
         hsrp_required = 1,
         hsrp_number = ?,
         hsrp_issued_date = ?,
@@ -418,6 +452,8 @@ const createHSRPRequest = async (req, res) => {
       WHERE sale_id = ?
       `,
       [
+        contact_id,
+        contact_vehicle_id,
         finalHsrpNumber,
         hsrpIssuedDate,
         plateReceived,
@@ -432,6 +468,8 @@ const createHSRPRequest = async (req, res) => {
       `
       UPDATE hsrp_fitment
       SET
+        contact_id = ?,
+        contact_vehicle_id = ?,
         hsrp_installed = ?,
         fitment_date = ?,
         amount_paid = ?,
@@ -440,6 +478,8 @@ const createHSRPRequest = async (req, res) => {
       WHERE sale_id = ?
       `,
       [
+        contact_id,
+        contact_vehicle_id,
         installed,
         fitmentDate,
         amountPaid,

@@ -2,6 +2,7 @@
 
 const db = require("../db");
 const XLSX = require("xlsx");
+const { getContactLinksFromSale } = require("../utils/saleLinkHelper");
 
 /**
  * POST /api/insurance/:sale_id
@@ -10,7 +11,7 @@ const XLSX = require("xlsx");
  */
 exports.createInsurance = async (req, res) => {
   try {
-    const sale_id = req.params.sale_id;
+    const sale_id = Number(req.params.sale_id);
 
     const {
       customer_name,
@@ -29,22 +30,52 @@ exports.createInsurance = async (req, res) => {
     } = req.body;
 
     // Check if insurance already exists for this sale
-    const [existing] = await db.query("SELECT id FROM insurance WHERE sale_id = ?", [sale_id]);
+    const [existing] = await db.query(
+      "SELECT id FROM insurance WHERE sale_id = ?",
+      [sale_id]
+    );
+
     if (existing.length > 0) {
-      return res.status(409).json({ success: false, message: "Insurance already exists for this sale" });
+      return res.status(409).json({
+        success: false,
+        message: "Insurance already exists for this sale",
+      });
     }
+
+    // Always derive from sale on backend
+    const { contact_id, contact_vehicle_id } =
+      await getContactLinksFromSale(sale_id);
 
     const renewed_by = req.user?.id || null;
 
     const [result] = await db.query(
       `INSERT INTO insurance
-        (sale_id, chassis_number, customer_name, vehicle_no, phone,
-         insurance_type, company, policy_number, cpa_included, cpa_number,
-         premium_amount, start_date, expiry_date, invoice_number, renewed_by, remarks)
+        (
+          sale_id,
+          contact_id,
+          contact_vehicle_id,
+          chassis_number,
+          customer_name,
+          vehicle_no,
+          phone,
+          insurance_type,
+          company,
+          policy_number,
+          cpa_included,
+          cpa_number,
+          premium_amount,
+          start_date,
+          expiry_date,
+          invoice_number,
+          renewed_by,
+          remarks
+        )
        VALUES
-        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
       [
         sale_id,
+        contact_id,
+        contact_vehicle_id,
         chassis_number || null,
         customer_name,
         vehicle_no,
@@ -62,7 +93,11 @@ exports.createInsurance = async (req, res) => {
       ]
     );
 
-    return res.status(201).json({ success: true, message: "Insurance created", insuranceId: result.insertId });
+    return res.status(201).json({
+      success: true,
+      message: "Insurance created",
+      insuranceId: result.insertId,
+    });
   } catch (err) {
     console.error("createInsurance error:", err);
     return res.status(500).json({ success: false, message: err.message });
@@ -73,9 +108,15 @@ exports.getInsurance = async (req, res) => {
   try {
     const sale_id = req.params.sale_id;
 
-    const [rows] = await db.query("SELECT * FROM insurance WHERE sale_id = ?", [sale_id]);
+    const [rows] = await db.query(
+      "SELECT * FROM insurance WHERE sale_id = ?",
+      [sale_id]
+    );
+
     if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: "No insurance record for this sale" });
+      return res
+        .status(404)
+        .json({ success: false, message: "No insurance record for this sale" });
     }
 
     return res.json({ success: true, insurance: rows[0] });
@@ -87,7 +128,7 @@ exports.getInsurance = async (req, res) => {
 
 exports.updateInsurance = async (req, res) => {
   try {
-    const sale_id = req.params.sale_id;
+    const sale_id = Number(req.params.sale_id);
 
     const {
       customer_name,
@@ -105,13 +146,26 @@ exports.updateInsurance = async (req, res) => {
       remarks,
     } = req.body;
 
-    const [existing] = await db.query("SELECT id FROM insurance WHERE sale_id = ?", [sale_id]);
+    const [existing] = await db.query(
+      "SELECT id FROM insurance WHERE sale_id = ?",
+      [sale_id]
+    );
+
     if (existing.length === 0) {
-      return res.status(404).json({ success: false, message: "Cannot update — insurance record not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Cannot update — insurance record not found",
+      });
     }
+
+    // Re-derive on update too, so old records get corrected over time
+    const { contact_id, contact_vehicle_id } =
+      await getContactLinksFromSale(sale_id);
 
     await db.query(
       `UPDATE insurance SET
+        contact_id = ?,
+        contact_vehicle_id = ?,
         chassis_number = ?,
         customer_name = ?,
         vehicle_no = ?,
@@ -128,6 +182,8 @@ exports.updateInsurance = async (req, res) => {
         remarks = ?
        WHERE sale_id = ?`,
       [
+        contact_id,
+        contact_vehicle_id,
         chassis_number || null,
         customer_name,
         vehicle_no,
@@ -178,10 +234,19 @@ exports.exportInsurance = async (req, res) => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Insurance");
 
-    const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+    const buffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: "xlsx",
+    });
 
-    res.setHeader("Content-Disposition", "attachment; filename=insurance_policies.xlsx");
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=insurance_policies.xlsx"
+    );
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
     return res.send(buffer);
   } catch (err) {
     console.error("exportInsurance error:", err);
@@ -254,6 +319,9 @@ exports.getAllInsurance = async (req, res) => {
     return res.json({ success: true, data: rows });
   } catch (err) {
     console.error("getAllInsurance error:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch insurance list" });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch insurance list",
+    });
   }
 };
