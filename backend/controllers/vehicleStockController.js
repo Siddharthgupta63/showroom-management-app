@@ -59,6 +59,21 @@ const ALLOWED_STATUS = new Set([
   "damaged",
 ]);
 
+async function getDefaultBranchId(conn) {
+  const [rows] = await conn.query(
+    `
+    SELECT id
+    FROM showroom_branches
+    WHERE is_active = 1
+    ORDER BY
+      CASE WHEN LOWER(TRIM(branch_name)) = LOWER('Main Showroom') THEN 0 ELSE 1 END,
+      id ASC
+    LIMIT 1
+    `
+  );
+  return rows?.[0]?.id || null;
+}
+
 async function getModelIdByName(name) {
   const modelName = normalizeStr(name);
   if (!modelName) return null;
@@ -151,10 +166,24 @@ exports.listStock = async (req, res) => {
       params.push(like, like, like, like, like, like, like, like, like);
     }
 
-    if (status_code) {
-      where.push(`vpi.status_code = ?`);
-      params.push(status_code);
-    }
+   if (status_code) {
+  const normalizedStatus = String(status_code).toLowerCase();
+
+  where.push(`LOWER(vpi.status_code) = ?`);
+  params.push(normalizedStatus);
+
+  if (normalizedStatus === "in_stock") {
+    where.push(`vpi.sale_id IS NULL`);
+    where.push(`
+      NOT EXISTS (
+        SELECT 1
+        FROM sales s
+        WHERE s.stock_item_id = vpi.id
+          AND COALESCE(s.is_cancelled, 0) = 0
+      )
+    `);
+  }
+}
     if (model_id) {
       where.push(`vpi.model_id = ?`);
       params.push(model_id);
@@ -171,8 +200,8 @@ exports.listStock = async (req, res) => {
       where.push(`vp.entry_type = ?`);
       params.push(entry_type);
     }
-    if (branch_id) {
-      where.push(`vp.branch_id = ?`);
+      if (branch_id) {
+      where.push(`vpi.current_branch_id = ?`);
       params.push(branch_id);
     }
     if (purchase_from) {
@@ -201,7 +230,7 @@ exports.listStock = async (req, res) => {
       JOIN vehicle_purchases vp ON vp.id = vpi.purchase_id
       LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
       LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
-      LEFT JOIN showroom_branches sb ON sb.id = vp.branch_id
+      LEFT JOIN showroom_branches sb ON sb.id = vpi.current_branch_id
       WHERE ${where.join(" AND ")}
     `;
 
@@ -243,7 +272,8 @@ exports.listStock = async (req, res) => {
         vp.received_date,
         vp.invoice_received_at,
         vp.updated_invoice_by,
-        vp.branch_id,
+               vp.branch_id AS purchase_branch_id,
+        vpi.current_branch_id,
         vp.invoice_number,
         vp.invoice_date,
         vp.purchase_date,
@@ -303,7 +333,7 @@ exports.createPurchase = async (req, res) => {
     const invoice_pending = Number(req.body?.invoice_pending) === 1 ? 1 : 0;
     const supplier_name = normalizeStr(req.body?.supplier_name) || null;
     const received_date = parseNullableDate(req.body?.received_date);
-    const branch_id = parseNullableNumber(req.body?.branch_id);
+    let branch_id = parseNullableNumber(req.body?.branch_id);
     const invoice_number = normalizeStr(req.body?.invoice_number) || null;
     const invoice_date = parseNullableDate(req.body?.invoice_date);
     const purchase_date = parseNullableDate(req.body?.purchase_date);
@@ -339,6 +369,18 @@ exports.createPurchase = async (req, res) => {
 
     conn = await db.getConnection();
     await conn.beginTransaction();
+
+    if (!branch_id) {
+  branch_id = await getDefaultBranchId(conn);
+}
+
+if (!branch_id) {
+  await conn.rollback();
+  return res.status(400).json({
+    success: false,
+    message: "No active branch found. Please create/activate a branch first.",
+  });
+}
 
     for (let i = 0; i < items.length; i++) {
       const row = items[i] || {};
@@ -428,31 +470,33 @@ exports.createPurchase = async (req, res) => {
 
       await conn.query(
         `
-        INSERT INTO vehicle_purchase_items
-        (
-          purchase_id,
-          chassis_number,
-          engine_number,
-          model_id,
-          variant_id,
-          color,
-          purchase_price,
-          status_code,
-          remarks
-        )
-        VALUES (?,?,?,?,?,?,?,?,?)
+       INSERT INTO vehicle_purchase_items
+(
+  purchase_id,
+  current_branch_id,
+  chassis_number,
+  engine_number,
+  model_id,
+  variant_id,
+  color,
+  purchase_price,
+  status_code,
+  remarks
+)
+VALUES (?,?,?,?,?,?,?,?,?,?)
         `,
         [
-          purchaseId,
-          chassis_number,
-          engine_number,
-          model_id,
-          variant_id,
-          color,
-          Number.isFinite(purchase_price) ? purchase_price : 0,
-          "in_stock",
-          remarks,
-        ]
+  purchaseId,
+  branch_id,
+  chassis_number,
+  engine_number,
+  model_id,              
+  variant_id,
+  color,
+  Number.isFinite(purchase_price) ? purchase_price : 0,
+  "in_stock",
+  remarks,
+]
       );
     }
 
@@ -883,6 +927,7 @@ exports.importStockExcel = [
           errors.push({ row: row.row_no, reason: "Duplicate engine_number inside file" });
           continue;
         }
+
         seenChassis.add(row.chassis_number);
         seenEngine.add(row.engine_number);
 
@@ -913,7 +958,10 @@ exports.importStockExcel = [
           [row.chassis_number, row.engine_number]
         );
         if (dupDb.length) {
-          errors.push({ row: row.row_no, reason: "Duplicate chassis_number or engine_number already exists in DB" });
+          errors.push({
+            row: row.row_no,
+            reason: "Duplicate chassis_number or engine_number already exists in DB",
+          });
           continue;
         }
       }
@@ -932,6 +980,15 @@ exports.importStockExcel = [
       conn = await db.getConnection();
       await conn.beginTransaction();
 
+      const defaultBranchId = await getDefaultBranchId(conn);
+      if (!defaultBranchId) {
+        await conn.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "No active branch found. Please create/activate a branch first.",
+        });
+      }
+
       const batchNo = `IMP-${Date.now()}`;
 
       const [purchaseResult] = await conn.query(
@@ -945,10 +1002,11 @@ exports.importStockExcel = [
           invoice_pending,
           supplier_name,
           received_date,
+          branch_id,
           notes,
           created_by
         )
-        VALUES (?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         `,
         [
           "Old Stock Import",
@@ -958,6 +1016,7 @@ exports.importStockExcel = [
           1,
           null,
           new Date().toISOString().slice(0, 10),
+          defaultBranchId,
           "Imported from excel",
           req.user?.id || null,
         ]
@@ -971,6 +1030,7 @@ exports.importStockExcel = [
           INSERT INTO vehicle_purchase_items
           (
             purchase_id,
+            current_branch_id,
             chassis_number,
             engine_number,
             model_id,
@@ -981,10 +1041,11 @@ exports.importStockExcel = [
             import_batch_no,
             remarks
           )
-          VALUES (?,?,?,?,?,?,?,?,?,?)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?)
           `,
           [
             purchaseId,
+            defaultBranchId,
             row.chassis_number,
             row.engine_number,
             row.model_id,
@@ -1012,6 +1073,7 @@ exports.importStockExcel = [
         },
         batch_no: batchNo,
         purchase_id: purchaseId,
+        default_branch_id: defaultBranchId,
         errors,
       });
     } catch (e) {
@@ -1030,3 +1092,47 @@ exports.importStockExcel = [
     }
   },
 ];
+
+// =====================================================
+// GET /api/stock/branch-summary
+// =====================================================
+// =====================================================
+// GET /api/stock/branch-summary
+// =====================================================
+exports.getBranchSummary = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT
+        sb.id AS branch_id,
+        sb.branch_name,
+
+        COUNT(vpi.id) AS total_count,
+
+        SUM(CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'in_stock' THEN 1 ELSE 0 END) AS in_stock_count,
+        SUM(CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'sold' THEN 1 ELSE 0 END) AS sold_count,
+        SUM(CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'delivered' THEN 1 ELSE 0 END) AS delivered_count,
+        SUM(
+          CASE
+            WHEN LOWER(COALESCE(vpi.status_code, '')) NOT IN ('in_stock', 'sold', 'delivered')
+            THEN 1
+            ELSE 0
+          END
+        ) AS other_count
+
+      FROM showroom_branches sb
+      LEFT JOIN vehicle_purchase_items vpi
+        ON vpi.current_branch_id = sb.id
+      WHERE sb.is_active = 1
+      GROUP BY sb.id, sb.branch_name
+      ORDER BY sb.branch_name ASC
+    `);
+
+    return res.json({
+      success: true,
+      data: rows || [],
+    });
+  } catch (e) {
+    console.error("stock getBranchSummary:", e);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};

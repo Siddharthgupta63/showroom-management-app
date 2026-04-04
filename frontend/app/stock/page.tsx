@@ -31,6 +31,9 @@ type StockRow = {
   invoice_date?: string | null;
   purchase_date?: string | null;
 
+  purchase_branch_id?: number | null;
+  current_branch_id?: number | null;
+
   model_name?: string | null;
   variant_name?: string | null;
   branch_name?: string | null;
@@ -42,6 +45,21 @@ type DropdownRow = {
   label?: string | null;
   type?: string;
   is_active?: number;
+};
+
+type BranchRow = {
+  id: number;
+  branch_name: string;
+};
+
+type BranchSummaryRow = {
+  branch_id: number;
+  branch_name: string;
+  total_count: number;
+  in_stock_count: number;
+  sold_count: number;
+  delivered_count: number;
+  other_count: number;
 };
 
 type SummaryColorRow = {
@@ -135,6 +153,11 @@ export default function StockPage() {
   const [rows, setRows] = useState<StockRow[]>([]);
   const [uploading, setUploading] = useState(false);
 
+  const [branches, setBranches] = useState<BranchRow[]>([]);
+  const [branchFilter, setBranchFilter] = useState<string>("all");
+  const [branchSummary, setBranchSummary] = useState<BranchSummaryRow[]>([]);
+  const [branchSummaryLoading, setBranchSummaryLoading] = useState(false);
+
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("in_stock");
   const [modelFilter, setModelFilter] = useState("all");
@@ -152,14 +175,26 @@ export default function StockPage() {
 
   useEffect(() => {
     setUser(getUser());
-    fetchStock();
     fetchColorDropdowns();
+    fetchBranches();
+    fetchBranchSummary();
   }, []);
+
+  useEffect(() => {
+    fetchStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchFilter]);
 
   async function fetchStock() {
     try {
       setLoading(true);
-      const res = await api.get("/api/stock");
+
+      const params: Record<string, any> = {};
+      if (branchFilter !== "all") {
+        params.branch_id = Number(branchFilter);
+      }
+
+      const res = await api.get("/api/stock", { params });
       setRows(Array.isArray(res.data?.data) ? res.data.data : []);
     } catch (e: any) {
       console.error("fetchStock failed", e?.response?.status, e?.response?.data || e);
@@ -182,6 +217,29 @@ export default function StockPage() {
     } catch (e) {
       console.warn("color dropdown fetch skipped", e);
       setColorRows([]);
+    }
+  }
+
+  async function fetchBranches() {
+    try {
+      const res = await api.get("/api/branches");
+      setBranches(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (e) {
+      console.warn("branch fetch failed", e);
+      setBranches([]);
+    }
+  }
+
+  async function fetchBranchSummary() {
+    try {
+      setBranchSummaryLoading(true);
+      const res = await api.get("/api/stock/branch-summary");
+      setBranchSummary(Array.isArray(res.data?.data) ? res.data.data : []);
+    } catch (e) {
+      console.warn("branch summary fetch failed", e);
+      setBranchSummary([]);
+    } finally {
+      setBranchSummaryLoading(false);
     }
   }
 
@@ -270,6 +328,7 @@ export default function StockPage() {
       );
 
       await fetchStock();
+      await fetchBranchSummary();
     } catch (e: any) {
       alert(e?.response?.data?.message || "Import failed");
     } finally {
@@ -281,6 +340,7 @@ export default function StockPage() {
     try {
       await api.patch(`/api/stock/${id}/delivered`);
       await fetchStock();
+      await fetchBranchSummary();
     } catch (e: any) {
       alert(e?.response?.data?.message || "Failed to mark delivered");
     }
@@ -533,6 +593,7 @@ export default function StockPage() {
       detailedRows.map((r) => ({
         id: r.id,
         purchase_id: r.purchase_id,
+        branch_name: r.branch_name || "-",
         stock_date: getStockDate(r) || "-",
         chassis_number: r.chassis_number,
         engine_number: r.engine_number,
@@ -554,6 +615,7 @@ export default function StockPage() {
       list.map((r) => ({
         id: r.id,
         purchase_id: r.purchase_id,
+        branch_name: r.branch_name || "-",
         stock_date: getStockDate(r) || "-",
         chassis_number: r.chassis_number,
         engine_number: r.engine_number,
@@ -675,6 +737,77 @@ export default function StockPage() {
           </div>
         </div>
 
+        <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">Branch-wise Stock Display</h2>
+              <p className="text-sm text-gray-500">
+                Click a branch card to filter the stock below
+              </p>
+            </div>
+
+            <button
+              type="button"
+              className="px-4 py-2 rounded-xl border"
+              onClick={() => setBranchFilter("all")}
+            >
+              Show All Branches
+            </button>
+          </div>
+
+          {branchSummaryLoading ? (
+            <div className="text-sm text-gray-500">Loading branch summary...</div>
+          ) : branchSummary.length === 0 ? (
+            <div className="text-sm text-gray-500">No branch summary found</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-3">
+              {branchSummary.map((b) => {
+                const active = String(branchFilter) === String(b.branch_id);
+
+                return (
+                  <button
+                    key={b.branch_id}
+                    type="button"
+                    onClick={() => setBranchFilter(String(b.branch_id))}
+                    className={`rounded-2xl border p-4 shadow-sm text-left transition ${
+                      active
+                        ? "bg-gray-900 text-white border-gray-900"
+                        : "bg-white hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="text-lg font-semibold">{b.branch_name}</div>
+                    <div className={`text-sm mt-1 ${active ? "text-gray-200" : "text-gray-500"}`}>
+                      Total: {Number(b.total_count || 0)}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+                      <div>
+                        <div className={active ? "text-gray-200" : "text-gray-500"}>In Stock</div>
+                        <div className="font-bold">{Number(b.in_stock_count || 0)}</div>
+                      </div>
+
+                      <div>
+                        <div className={active ? "text-gray-200" : "text-gray-500"}>Sold</div>
+                        <div className="font-bold">{Number(b.sold_count || 0)}</div>
+                      </div>
+
+                      <div>
+                        <div className={active ? "text-gray-200" : "text-gray-500"}>Delivered</div>
+                        <div className="font-bold">{Number(b.delivered_count || 0)}</div>
+                      </div>
+
+                      <div>
+                        <div className={active ? "text-gray-200" : "text-gray-500"}>Other</div>
+                        <div className="font-bold">{Number(b.other_count || 0)}</div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {isOwnerAdmin && (
           <div className="rounded-2xl border bg-white p-4 shadow-sm space-y-3">
             <h2 className="text-lg font-semibold">Old Stock Excel Import</h2>
@@ -709,6 +842,19 @@ export default function StockPage() {
             <h2 className="text-lg font-semibold">Common Filters</h2>
 
             <div className="flex flex-col md:flex-row gap-3 flex-wrap">
+              <select
+                className="border rounded-xl px-3 py-2"
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+              >
+                <option value="all">All Branches</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={String(b.id)}>
+                    {b.branch_name}
+                  </option>
+                ))}
+              </select>
+
               <select
                 className="border rounded-xl px-3 py-2"
                 value={modelFilter}
@@ -747,6 +893,7 @@ export default function StockPage() {
                 type="button"
                 className="px-4 py-2 rounded-xl border"
                 onClick={() => {
+                  setBranchFilter("all");
                   setModelFilter("all");
                   setDateFrom("");
                   setDateTo("");
@@ -1046,6 +1193,7 @@ export default function StockPage() {
               <table className="min-w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-100 text-left">
+                    <th className="p-2 border">Branch</th>
                     <th className="p-2 border">Chassis</th>
                     <th className="p-2 border">Engine</th>
                     <th className="p-2 border">Model</th>
@@ -1064,6 +1212,7 @@ export default function StockPage() {
                     <>
                       {detailedRows.map((r) => (
                         <tr key={r.id}>
+                          <td className="p-2 border">{r.branch_name || "-"}</td>
                           <td className="p-2 border">{r.chassis_number}</td>
                           <td className="p-2 border">{r.engine_number}</td>
                           <td className="p-2 border">{r.model_name || "-"}</td>
@@ -1095,7 +1244,7 @@ export default function StockPage() {
                         </tr>
                       ))}
                       <tr className="bg-gray-50 font-bold">
-                        <td className="p-2 border" colSpan={2}>Grand Total</td>
+                        <td className="p-2 border" colSpan={3}>Grand Total</td>
                         <td className="p-2 border" colSpan={2}>{detailedTotals.total_qty} Vehicles</td>
                         <td className="p-2 border">-</td>
                         <td className="p-2 border">
@@ -1108,7 +1257,7 @@ export default function StockPage() {
                     </>
                   ) : (
                     <tr>
-                      <td className="p-3 border text-center" colSpan={11}>
+                      <td className="p-3 border text-center" colSpan={12}>
                         No detailed stock found
                       </td>
                     </tr>

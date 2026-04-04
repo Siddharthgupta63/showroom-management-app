@@ -22,6 +22,9 @@ router.use(authMiddleware);
 // ✅ full stock list for stock page
 router.get("/", stock.listStock);
 
+// ✅ branch-wise summary for stock page
+router.get("/branch-summary", stock.getBranchSummary);
+
 // ✅ available stock for sales/vehicle selection
 router.get("/available", salesController.getAvailableStock);
 

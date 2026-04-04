@@ -335,7 +335,26 @@ export default function NewSalePage() {
   const [vehicleLoading, setVehicleLoading] = useState(false);
 
   const [selectedVehicle, setSelectedVehicle] = useState<VehicleRow | null>(null);
+    const previousBranchRef = useRef<number | "">("");
+
+  useEffect(() => {
+    if (previousBranchRef.current === "") {
+      previousBranchRef.current = branchId;
+      return;
+    }
+
+    if (previousBranchRef.current !== branchId) {
+      setSelectedVehicle(null);
+      setVehiclePicked(false);
+      setHistory([]);
+      setVq("");
+      setErr("");
+    }
+
+    previousBranchRef.current = branchId;
+  }, [branchId]);
   const [vehiclePicked, setVehiclePicked] = useState(false);
+  
 
   const [searchAllVehicles, setSearchAllVehicles] = useState(true);
 
@@ -364,8 +383,19 @@ export default function NewSalePage() {
     };
   };
 
-  const fetchVehicles = async (q: string) => {
+    const fetchVehicles = async (q: string) => {
     if (!contactId) {
+      setVehicleGroups({
+        linked: [],
+        unlinked: [],
+        otherVisible: [],
+        all: [],
+        summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
+      });
+      return;
+    }
+
+    if (branchId === "") {
       setVehicleGroups({
         linked: [],
         unlinked: [],
@@ -383,6 +413,7 @@ export default function NewSalePage() {
       const params: Record<string, any> = {
         q: q || "",
         contact_id: contactId,
+        branch_id: Number(branchId),
         include_sold: searchAllVehicles ? 1 : 0,
       };
 
@@ -426,8 +457,8 @@ export default function NewSalePage() {
     }
   };
 
-  useEffect(() => {
-    if (!contactId) {
+   useEffect(() => {
+    if (!contactId || branchId === "") {
       setVehicleGroups({
         linked: [],
         unlinked: [],
@@ -437,6 +468,7 @@ export default function NewSalePage() {
       });
       return;
     }
+
     fetchVehicles(dvq.trim()).catch(() => {
       setVehicleGroups({
         linked: [],
@@ -446,7 +478,7 @@ export default function NewSalePage() {
         summary: { total: 0, linked: 0, unlinked: 0, other_visible: 0 },
       });
     });
-  }, [dvq, contactId, searchAllVehicles]);
+  }, [dvq, contactId, branchId, searchAllVehicles]);
 
   const [history, setHistory] = useState<SalesTraceRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -977,8 +1009,12 @@ export default function NewSalePage() {
               </label>
             </div>
 
-            {!contactId ? (
+                       {!contactId ? (
               <div className="mt-2 text-sm text-amber-700">Select a customer first.</div>
+            ) : branchId === "" ? (
+              <div className="mt-2 text-sm text-amber-700">
+                Select branch first. Only stock from the selected branch will be shown.
+              </div>
             ) : vehiclePicked && selectedVehicle ? (
               <div className="mt-3">
                 <div className="p-3 rounded-lg border bg-blue-50 border-blue-200 text-sm">

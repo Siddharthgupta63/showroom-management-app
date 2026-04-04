@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 
+
 async function ensureContactVehicleLink({
   connection,
   stockItemId,
@@ -240,7 +241,15 @@ async function getStockItemByIdForUpdate(conn, stockItemId) {
   return rows?.[0] || null;
 }
 
-async function assertStockItemAssignable(conn, { stockItemId, contactVehicleId = null, excludeSaleId = null }) {
+async function assertStockItemAssignable(
+  conn,
+  {
+    stockItemId,
+    contactVehicleId = null,
+    excludeSaleId = null,
+    branchId = null,
+  }
+) {
   const stock = await getStockItemByIdForUpdate(conn, stockItemId);
 
   if (!stock) {
@@ -266,6 +275,12 @@ async function assertStockItemAssignable(conn, { stockItemId, contactVehicleId =
   ) {
     const err = new Error("Selected stock item does not belong to the chosen vehicle");
     err.statusCode = 400;
+    throw err;
+  }
+
+  if (branchId && Number(stock.current_branch_id || 0) !== Number(branchId)) {
+    const err = new Error("Selected stock item does not belong to the selected sale branch");
+    err.statusCode = 409;
     throw err;
   }
 
@@ -374,6 +389,8 @@ async function getBranchName(conn, branchId) {
   ]);
   return rows?.[0]?.branch_name || null;
 }
+
+
 
 // =====================================================
 // Insurance helpers
@@ -1051,6 +1068,7 @@ exports.createSale = async (req, res) => {
         stockItemId,
         contactVehicleId: vehicleId || null,
         excludeSaleId: null,
+        branchId,
       });
 
       let finalVehicleId = vehicleId || null;
@@ -1394,6 +1412,7 @@ exports.updateSale = async (req, res) => {
         stockItemId: newStockItemId,
         contactVehicleId: finalVehicleId,
         excludeSaleId: id,
+        branchId,
       });
 
       if (finalVehicleId) {
@@ -1546,11 +1565,12 @@ exports.updateSale = async (req, res) => {
     const finalStockItemId = newStockItemId ? Number(newStockItemId) : null;
 
     if (finalStockItemId) {
-      await assertStockItemAssignable(conn, {
-        stockItemId: finalStockItemId,
-        contactVehicleId: finalVehicleId,
-        excludeSaleId: id,
-      });
+     await assertStockItemAssignable(conn, {
+  stockItemId: finalStockItemId,
+  contactVehicleId: finalVehicleId,
+  excludeSaleId: id,
+  branchId,
+});
     }
 
     const updates = {
@@ -2293,6 +2313,10 @@ exports.deleteSale = async (req, res) => {
 exports.getAvailableStock = async (req, res) => {
   try {
     const contactId = Number(req.query.contact_id || 0);
+    const branchId =
+      req.query.branch_id != null && String(req.query.branch_id).trim() !== ""
+        ? Number(req.query.branch_id)
+        : null;
     const q = String(req.query.q || "").trim();
     const includeSold =
       Number(req.query.include_sold || 0) === 1 ||
@@ -2305,17 +2329,41 @@ exports.getAvailableStock = async (req, res) => {
       });
     }
 
-    const params = [contactId];
+    // branch required for branch-wise stock selling
+    if (!branchId) {
+      return res.json({
+        success: true,
+        data: {
+          linked: [],
+          unlinked: [],
+          other_visible: [],
+          all: [],
+          summary: {
+            total: 0,
+            linked: 0,
+            unlinked: 0,
+            other_visible: 0,
+          },
+        },
+        message: "Select branch first",
+      });
+    }
+
+    const params = [];
     const where = [];
 
-    // ✅ IMPORTANT FIX:
+    // old logic preserved:
     // show stock if:
     // 1) no contact_vehicle row exists
     // 2) contact_vehicle exists but has no customer linked yet
     // 3) contact_vehicle is linked to selected customer
-    //
-    // hide only rows linked to some other customer
     where.push(`(cv.id IS NULL OR cv.contact_id IS NULL OR cv.contact_id = ?)`);
+    params.push(contactId);
+
+    // new logic:
+    // show only stock of selected branch
+    where.push(`vpi.current_branch_id = ?`);
+    params.push(branchId);
 
     if (q) {
       const like = `%${q}%`;
@@ -2350,6 +2398,7 @@ exports.getAvailableStock = async (req, res) => {
         vpi.sale_id,
         vpi.model_id,
         vpi.variant_id,
+        vpi.current_branch_id,
 
         COALESCE(cv.vehicle_make, 'Hero') AS vehicle_make,
         COALESCE(cv.vehicle_model, vm.model_name, '') AS vehicle_model,
@@ -2400,14 +2449,10 @@ exports.getAvailableStock = async (req, res) => {
 
     const linked = allRows.filter((r) => Number(r.is_selected_contact_vehicle) === 1);
 
-    // ✅ treat customer-less linked vehicle as usable/unlinked
     const unlinked = allRows.filter(
       (r) =>
         Number(r.is_selected_contact_vehicle) !== 1 &&
-        (
-          !Number(r.contact_vehicle_id || 0) ||
-          r.contact_id == null
-        )
+        (!Number(r.contact_vehicle_id || 0) || r.contact_id == null)
     );
 
     const otherVisible = allRows.filter(

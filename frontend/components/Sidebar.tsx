@@ -113,11 +113,22 @@ export default function Sidebar() {
           </Link>
         )}
 
-        {canStock && (
-          <Link href="/stock" className={linkClass("/stock")}>
-            Stock
-          </Link>
-        )}
+      {canStock && (
+  <div>
+    <Link href="/stock" className={linkClass("/stock")}>
+      Stock
+    </Link>
+
+    <div className="ml-4 mt-1 space-y-1">
+      <Link
+        href="/stock/transfers"
+        className={childLinkClass("/stock/transfers")}
+      >
+        Stock Transfers
+      </Link>
+    </div>
+  </div>
+)}
 
         {canInsurance && (
           <Link href="/insurance" className={linkClass("/insurance")}>

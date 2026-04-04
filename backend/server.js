@@ -1,14 +1,16 @@
-// backend/server.js
 const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const dotenv = require("dotenv");
 const path = require("path");
+
 const branchesRoutes = require("./routes/branches");
 const { ensureViews } = require("./utils/ensureViews");
 const hsrpRoutes = require("./routes/hsrp");
 const rcRoutes = require("./routes/rc");
 const vehicleStockRoutes = require("./routes/vehicleStock");
+const stockTransfersRoutes = require("./routes/stockTransfers");
+const stockTransferChallansRoutes = require("./routes/stockTransferChallans");
 // const stockRoutes = require("./routes/stock"); // ❌ do not mount duplicate /api/stock router
 
 dotenv.config(); // load env first
@@ -73,6 +75,9 @@ app.use("/api/insurance-combined", require("./routes/insuranceCombined"));
 app.use("/api/insurance-followup", require("./routes/insuranceFollowup"));
 app.use("/api/renewal", require("./routes/renewal"));
 
+app.use("/api/stock-transfers", stockTransfersRoutes);
+app.use("/api/stock-transfer-challans", stockTransferChallansRoutes);
+
 app.use("/api", require("./routes/whatsappSettings"));
 app.use("/api/pipeline", require("./routes/pipeline"));
 
@@ -103,13 +108,18 @@ app.get("/api/test-whatsapp-cron", async (req, res) => {
         .status(500)
         .json({ success: false, message: "runOnce() not found" });
     }
+
     await whatsappCron.runOnce();
+
     res.json({
       success: true,
       message: "WhatsApp cron executed once (check whatsapp_reminders table)",
     });
   } catch (e) {
-    res.status(500).json({ success: false, message: e?.message || "Cron failed" });
+    res.status(500).json({
+      success: false,
+      message: e?.message || "Cron failed",
+    });
   }
 });
 
