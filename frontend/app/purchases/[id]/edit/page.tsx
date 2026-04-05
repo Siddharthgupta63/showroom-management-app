@@ -282,6 +282,23 @@ export default function PurchaseEditPage() {
     setItems(next);
   };
 
+  const addNewItem = () => {
+    setItems((prev) => [
+      ...prev,
+      {
+        id: 0,
+        engine_number: "",
+        chassis_number: "",
+        color: "",
+        purchase_price: "",
+        model_id: "",
+        variant_id: "",
+      },
+    ]);
+    setError("");
+    setSuccess("");
+  };
+
   const removeItem = (index: number) => {
     if (items.length === 1) {
       const ok = window.confirm(
@@ -351,7 +368,7 @@ export default function PurchaseEditPage() {
         purchase_amount: form.purchase_amount,
         notes: form.notes,
         items: items.map((it) => ({
-          id: it.id,
+          id: it.id || 0,
           engine_number: it.engine_number.trim(),
           chassis_number: it.chassis_number.trim(),
           color: it.color || null,
@@ -433,7 +450,6 @@ export default function PurchaseEditPage() {
                   </div>
                 ) : null}
 
-                {/* Header */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -580,9 +596,18 @@ export default function PurchaseEditPage() {
                   </div>
                 </div>
 
-                {/* Items */}
                 <div className="border rounded-xl p-4 bg-gray-50">
-                  <div className="font-semibold mb-4">Edit Purchase Items</div>
+                  <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+                    <div className="font-semibold">Edit Purchase Items</div>
+
+                    <button
+                      type="button"
+                      onClick={addNewItem}
+                      className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      + Add Vehicle
+                    </button>
+                  </div>
 
                   <div className="overflow-x-auto border rounded-lg bg-white">
                     <table className="min-w-full text-sm">
@@ -601,7 +626,7 @@ export default function PurchaseEditPage() {
                       <tbody>
                         {items.length ? (
                           items.map((row, idx) => (
-                            <tr key={row.id}>
+                            <tr key={`${row.id || "new"}-${idx}`}>
                               <td className="px-3 py-2 border-b">{idx + 1}</td>
 
                               <td className="px-3 py-2 border-b">

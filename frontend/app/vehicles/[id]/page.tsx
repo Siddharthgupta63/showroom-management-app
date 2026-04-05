@@ -10,11 +10,12 @@ import { getUser } from "@/lib/auth";
 type Vehicle = {
   id: number;
   contact_id?: number | null;
+  purchase_id?: number | null;
   chassis_number?: string | null;
   engine_number?: string | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
-  color?: string | null; // stored as code (BKB)
+  color?: string | null;
   created_at?: string | null;
   is_deleted?: number;
 };
@@ -31,6 +32,15 @@ type TimelineEvent = {
 
 type DDItem = { id: number; value: string; label?: string | null };
 
+type PurchaseInfo = {
+  id: number;
+  purchase_from?: string | null;
+  purchase_date?: string | null;
+  invoice_number?: string | null;
+  transporter_name?: string | null;
+  notes?: string | null;
+};
+
 function formatColorLabel(item: DDItem) {
   return item.label ? `${item.value} — ${item.label}` : item.value;
 }
@@ -42,10 +52,10 @@ export default function VehicleViewPage() {
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [sales, setSales] = useState<SaleLink[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [purchase, setPurchase] = useState<PurchaseInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  // ✅ NEW: color lookup map
   const [colorMap, setColorMap] = useState<Map<string, DDItem>>(new Map());
 
   const user = getUser();
@@ -85,13 +95,35 @@ export default function VehicleViewPage() {
       setLoading(true);
       setErr("");
 
-      // load dropdown map (display-only)
       await loadColorDropdown();
 
       const res = await api.get(`/api/vehicles/${id}`);
-      setVehicle(res.data?.data || null);
+      const v = res.data?.data || null;
+      setVehicle(v);
 
-      // Linked sales
+      if (v?.purchase_id) {
+        try {
+          const pres = await api.get(`/api/purchases/${v.purchase_id}`);
+          const p = pres.data?.data?.purchase || null;
+          if (p) {
+            setPurchase({
+              id: Number(p.id),
+              purchase_from: p.purchase_from || null,
+              purchase_date: p.purchase_date || null,
+              invoice_number: p.invoice_number || null,
+              transporter_name: p.transporter_name || null,
+              notes: p.notes || null,
+            });
+          } else {
+            setPurchase(null);
+          }
+        } catch {
+          setPurchase(null);
+        }
+      } else {
+        setPurchase(null);
+      }
+
       try {
         const sres = await api.get(`/api/vehicles/${id}/sales`);
         setSales(sres.data?.data || []);
@@ -99,7 +131,6 @@ export default function VehicleViewPage() {
         setSales([]);
       }
 
-      // Timeline
       try {
         const tres = await api.get(`/api/vehicles/${id}/timeline`);
         setTimeline(tres.data?.data || []);
@@ -145,7 +176,6 @@ export default function VehicleViewPage() {
             <p>Vehicle not found</p>
           ) : (
             <>
-              {/* Header */}
               <div className="flex justify-between items-start flex-wrap gap-3">
                 <div>
                   <h1 className="text-2xl font-bold">Vehicle #{vehicle.id}</h1>
@@ -164,7 +194,10 @@ export default function VehicleViewPage() {
                   </Link>
 
                   {canEdit && (
-                    <Link href={`/vehicles/${id}/edit`} className="px-4 py-2 border rounded-lg bg-blue-600 text-white">
+                    <Link
+                      href={`/vehicles/${id}/edit`}
+                      className="px-4 py-2 border rounded-lg bg-blue-600 text-white"
+                    >
                       Edit
                     </Link>
                   )}
@@ -180,20 +213,20 @@ export default function VehicleViewPage() {
                 </div>
               </div>
 
-              {/* Details */}
               <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <Detail label="Chassis Number" value={vehicle.chassis_number} />
                 <Detail label="Engine Number" value={vehicle.engine_number} />
                 <Detail label="Make" value={vehicle.vehicle_make} />
                 <Detail label="Model" value={vehicle.vehicle_model} />
-
-                {/* ✅ NEW: show formatted color */}
                 <Detail label="Color" value={displayColor(vehicle.color)} />
 
                 <div>
                   <p className="font-medium text-gray-600">Linked Contact</p>
                   {vehicle.contact_id ? (
-                    <Link href={`/contacts/${vehicle.contact_id}`} className="text-blue-600 underline">
+                    <Link
+                      href={`/contacts/${vehicle.contact_id}`}
+                      className="text-blue-600 underline"
+                    >
                       View Contact #{vehicle.contact_id}
                     </Link>
                   ) : (
@@ -202,7 +235,63 @@ export default function VehicleViewPage() {
                 </div>
               </div>
 
-              {/* Linked Sales */}
+              <div className="mt-8">
+                <h2 className="text-lg font-semibold mb-2">Source Purchase</h2>
+
+                {purchase ? (
+                  <div className="border rounded-xl p-4 bg-gray-50 text-sm">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-gray-600">Purchase Number</div>
+                        <div className="font-semibold">#{purchase.id}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-gray-600">Purchase From</div>
+                        <div className="font-semibold">{purchase.purchase_from || "-"}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-gray-600">Purchase Date</div>
+                        <div className="font-semibold">{purchase.purchase_date || "-"}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-gray-600">Invoice Number</div>
+                        <div className="font-semibold">{purchase.invoice_number || "-"}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-gray-600">Transporter Name</div>
+                        <div className="font-semibold">{purchase.transporter_name || "-"}</div>
+                      </div>
+
+                      <div className="flex items-end">
+                        <Link
+                          href={`/purchases/${purchase.id}`}
+                          className="px-3 py-2 border rounded-lg bg-white hover:bg-gray-50"
+                        >
+                          Open Purchase #{purchase.id}
+                        </Link>
+                      </div>
+
+                      {purchase.notes ? (
+                        <div className="md:col-span-2">
+                          <div className="text-gray-600">Notes</div>
+                          <div className="font-semibold whitespace-pre-wrap">
+                            {purchase.notes}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-500 text-sm">
+                    Purchase source not available.
+                  </p>
+                )}
+              </div>
+
               <div className="mt-8">
                 <h2 className="text-lg font-semibold mb-2">Linked Sales</h2>
 
@@ -223,7 +312,6 @@ export default function VehicleViewPage() {
                 )}
               </div>
 
-              {/* Timeline */}
               <div className="mt-8">
                 <h2 className="text-lg font-semibold mb-2">Timeline</h2>
 
@@ -236,7 +324,10 @@ export default function VehicleViewPage() {
                         <div className="font-medium">{e.type}</div>
                         <div className="text-gray-500">{e.at}</div>
                         {e.meta?.sale_id && (
-                          <Link href={`/sales/${e.meta.sale_id}`} className="text-blue-600 underline">
+                          <Link
+                            href={`/sales/${e.meta.sale_id}`}
+                            className="text-blue-600 underline"
+                          >
                             Sale #{e.meta.sale_id}
                           </Link>
                         )}

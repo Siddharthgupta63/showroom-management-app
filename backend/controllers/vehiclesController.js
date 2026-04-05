@@ -494,7 +494,9 @@ exports.importVehiclesExcel = [
 exports.getVehicleById = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ success: false, message: "Invalid ID" });
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid ID" });
+    }
 
     const role = String(req.user?.role || "").toLowerCase();
     const isOwnerAdmin = role === "owner" || role === "admin";
@@ -507,6 +509,7 @@ exports.getVehicleById = async (req, res) => {
       SELECT
         cv.id,
         cv.contact_id,
+        cv.purchase_id,
         cv.chassis_number,
         cv.engine_number,
         cv.model_id,
@@ -519,18 +522,54 @@ exports.getVehicleById = async (req, res) => {
         cv.deleted_at,
         cv.deleted_by,
         vm.model_name,
-        vv.variant_name
+        vv.variant_name,
+
+        stock.id AS purchase_item_id,
+        stock.purchase_id AS stock_purchase_id,
+        stock.status_code AS stock_status
+
       FROM contact_vehicles cv
       LEFT JOIN vehicle_models vm ON vm.id = cv.model_id
       LEFT JOIN vehicle_variants vv ON vv.id = cv.variant_id
+
+      LEFT JOIN (
+        SELECT x.*
+        FROM vehicle_purchase_items x
+        INNER JOIN (
+          SELECT contact_vehicle_id, MAX(id) AS max_id
+          FROM vehicle_purchase_items
+          WHERE contact_vehicle_id IS NOT NULL
+          GROUP BY contact_vehicle_id
+        ) latest
+          ON latest.max_id = x.id
+      ) stock ON stock.contact_vehicle_id = cv.id
+
       WHERE ${where}
       LIMIT 1
       `,
       [id]
     );
 
-    if (!rows.length) return res.status(404).json({ success: false, message: "Vehicle not found" });
-    return res.json({ success: true, data: rows[0] });
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Vehicle not found" });
+    }
+
+    const row = rows[0];
+
+    const finalPurchaseId =
+      row.stock_purchase_id != null
+        ? Number(row.stock_purchase_id)
+        : row.purchase_id != null
+        ? Number(row.purchase_id)
+        : null;
+
+    return res.json({
+      success: true,
+      data: {
+        ...row,
+        purchase_id: finalPurchaseId,
+      },
+    });
   } catch (e) {
     console.error("vehicles getVehicleById:", e);
     return res.status(500).json({ success: false, message: "Server error" });

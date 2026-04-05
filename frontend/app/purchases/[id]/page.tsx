@@ -39,6 +39,22 @@ type Item = {
   existing_sale_id: number | null;
 };
 
+type DDItem = {
+  id: number;
+  value: string;
+  label?: string | null;
+};
+
+function compactVehicleName(it: Item) {
+  const model = String(it.model_name || "").trim();
+  const variant = String(it.variant_name || "").trim();
+  if (model && variant) return `${model} / ${variant}`;
+  if (it.vehicle_name && String(it.vehicle_name).trim()) return String(it.vehicle_name).trim();
+  if (variant) return variant;
+  if (model) return model;
+  return "-";
+}
+
 export default function PurchaseViewPage() {
   const router = useRouter();
   const params = useParams();
@@ -62,8 +78,19 @@ export default function PurchaseViewPage() {
 
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [items, setItems] = useState<Item[]>([]);
+  const [colorOptions, setColorOptions] = useState<DDItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+
+  const colorLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of colorOptions) {
+      const key = String(c.value || "").trim().toUpperCase();
+      const label = String(c.label || "").trim();
+      if (key) map.set(key, label);
+    }
+    return map;
+  }, [colorOptions]);
 
   const counts = useMemo(() => {
     const total = items.length;
@@ -74,15 +101,47 @@ export default function PurchaseViewPage() {
     return { total, inserted, skipped };
   }, [items]);
 
+  const formatColor = (value: string | null) => {
+    const code = String(value || "").trim();
+    if (!code) return "-";
+    const label = colorLabelMap.get(code.toUpperCase());
+    return label ? `${code} — ${label}` : code;
+  };
+
+  const loadColors = async () => {
+    try {
+      const res = await api.get("/api/dropdowns", {
+        params: { types: "vehicle_color" },
+      });
+
+      const data = res.data?.data || {};
+      const colors: DDItem[] = (data.vehicle_color || [])
+        .map((x: any) => ({
+          id: Number(x.id),
+          value: String(x.value || ""),
+          label: x.label ? String(x.label) : null,
+        }))
+        .filter((x: DDItem) => x.value);
+
+      setColorOptions(colors);
+    } catch {
+      setColorOptions([]);
+    }
+  };
+
   const load = async () => {
     if (!id) return;
     setLoading(true);
     setErr("");
     try {
-      const res = await api.get(`/api/purchases/${id}`);
-      const data = res.data?.data;
+      const [purchaseRes] = await Promise.all([
+        api.get(`/api/purchases/${id}`),
+        loadColors(),
+      ]);
+
+      const data = purchaseRes.data?.data;
       setPurchase(data?.purchase || null);
-      setItems(data?.items || []);
+      setItems(Array.isArray(data?.items) ? data.items : []);
     } catch (e: any) {
       setErr(e?.response?.data?.message || "Failed to load purchase");
     } finally {
@@ -266,12 +325,10 @@ export default function PurchaseViewPage() {
                     items.map((it, idx) => (
                       <tr key={it.id} className={rowBg(it.status_code)}>
                         <td className="px-3 py-2 border-b">{idx + 1}</td>
-                        <td className="px-3 py-2 border-b">
-                          {it.vehicle_name || it.variant_name || it.model_name || "-"}
-                        </td>
+                        <td className="px-3 py-2 border-b">{compactVehicleName(it)}</td>
                         <td className="px-3 py-2 border-b">{it.chassis_number || "-"}</td>
                         <td className="px-3 py-2 border-b">{it.engine_number || "-"}</td>
-                        <td className="px-3 py-2 border-b">{it.color || "-"}</td>
+                        <td className="px-3 py-2 border-b">{formatColor(it.color)}</td>
                         <td className="px-3 py-2 border-b text-right">
                           {it.purchase_price != null
                             ? Number(it.purchase_price).toFixed(2)
