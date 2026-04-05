@@ -998,10 +998,12 @@ exports.listPurchases = async (req, res) => {
       where.push("COALESCE(p.purchase_from,'') = ?");
       params.push(purchase_from);
     }
+
     if (from) {
       where.push("p.purchase_date >= ?");
       params.push(from);
     }
+
     if (to) {
       where.push("p.purchase_date <= ?");
       params.push(to);
@@ -1009,17 +1011,37 @@ exports.listPurchases = async (req, res) => {
 
     if (q) {
       const like = `%${q}%`;
-      where.push(`(
-        COALESCE(p.purchase_from,'') LIKE ?
-        OR COALESCE(p.invoice_number,'') LIKE ?
-        OR CAST(p.id AS CHAR) LIKE ?
-      )`);
-      params.push(like, like, like);
+
+      where.push(`
+        (
+          COALESCE(p.purchase_from,'') LIKE ?
+          OR COALESCE(p.invoice_number,'') LIKE ?
+          OR CAST(p.id AS CHAR) LIKE ?
+          OR EXISTS (
+            SELECT 1
+            FROM vehicle_purchase_items vpi2
+            WHERE vpi2.purchase_id = p.id
+              AND (
+                COALESCE(vpi2.chassis_number,'') LIKE ?
+                OR COALESCE(vpi2.engine_number,'') LIKE ?
+              )
+          )
+        )
+      `);
+
+      params.push(like, like, like, like, like);
     }
 
     const whereSql = `WHERE ${where.join(" AND ")}`;
 
-    const [countRows] = await db.query(`SELECT COUNT(*) AS total FROM vehicle_purchases p ${whereSql}`, params);
+    const [countRows] = await db.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM vehicle_purchases p
+      ${whereSql}
+      `,
+      params
+    );
     const total = Number(countRows?.[0]?.total || 0);
 
     const headerAmountSel = purchaseAmountSelectExpr("p", schema.headerAmountCol);
@@ -1044,8 +1066,8 @@ exports.listPurchases = async (req, res) => {
         SELECT
           purchase_id,
           COUNT(*) AS total_items,
-          SUM(CASE WHEN status_code = 'in_stock' THEN 1 ELSE 0 END) AS inserted_items,
-SUM(CASE WHEN status_code <> 'in_stock' THEN 1 ELSE 0 END) AS skipped_items
+          SUM(CASE WHEN LOWER(COALESCE(status_code, '')) = 'in_stock' THEN 1 ELSE 0 END) AS inserted_items,
+          SUM(CASE WHEN LOWER(COALESCE(status_code, '')) <> 'in_stock' THEN 1 ELSE 0 END) AS skipped_items
         FROM vehicle_purchase_items
         GROUP BY purchase_id
       ) x ON x.purchase_id = p.id
@@ -1083,22 +1105,38 @@ exports.exportPurchasesExcel = async (req, res) => {
       where.push("COALESCE(p.purchase_from,'') = ?");
       params.push(purchase_from);
     }
+
     if (from) {
       where.push("p.purchase_date >= ?");
       params.push(from);
     }
+
     if (to) {
       where.push("p.purchase_date <= ?");
       params.push(to);
     }
+
     if (q) {
       const like = `%${q}%`;
-      where.push(`(
-        COALESCE(p.purchase_from,'') LIKE ?
-        OR COALESCE(p.invoice_number,'') LIKE ?
-        OR CAST(p.id AS CHAR) LIKE ?
-      )`);
-      params.push(like, like, like);
+
+      where.push(`
+        (
+          COALESCE(p.purchase_from,'') LIKE ?
+          OR COALESCE(p.invoice_number,'') LIKE ?
+          OR CAST(p.id AS CHAR) LIKE ?
+          OR EXISTS (
+            SELECT 1
+            FROM vehicle_purchase_items vpi2
+            WHERE vpi2.purchase_id = p.id
+              AND (
+                COALESCE(vpi2.chassis_number,'') LIKE ?
+                OR COALESCE(vpi2.engine_number,'') LIKE ?
+              )
+          )
+        )
+      `);
+
+      params.push(like, like, like, like, like);
     }
 
     const whereSql = `WHERE ${where.join(" AND ")}`;
@@ -1122,8 +1160,8 @@ exports.exportPurchasesExcel = async (req, res) => {
         SELECT
           purchase_id,
           COUNT(*) AS total_items,
-          SUM(CASE WHEN status_code = 'in_stock' THEN 1 ELSE 0 END) AS inserted_items,
-SUM(CASE WHEN status_code <> 'in_stock' THEN 1 ELSE 0 END) AS skipped_items
+          SUM(CASE WHEN LOWER(COALESCE(status_code, '')) = 'in_stock' THEN 1 ELSE 0 END) AS inserted_items,
+          SUM(CASE WHEN LOWER(COALESCE(status_code, '')) <> 'in_stock' THEN 1 ELSE 0 END) AS skipped_items
         FROM vehicle_purchase_items
         GROUP BY purchase_id
       ) x ON x.purchase_id = p.id
@@ -1547,9 +1585,6 @@ exports.updatePurchaseById = async (req, res) => {
 
     await conn.beginTransaction();
 
-    // -----------------------------------
-    // Resolve final branch safely
-    // -----------------------------------
     let final_branch_id = requested_branch_id;
 
     if (!Number.isFinite(final_branch_id) || final_branch_id <= 0) {
@@ -1569,9 +1604,6 @@ exports.updatePurchaseById = async (req, res) => {
       });
     }
 
-    // ----------------------------
-    // Update header first
-    // ----------------------------
     const updates = [];
     const values = [];
 
@@ -1633,16 +1665,19 @@ exports.updatePurchaseById = async (req, res) => {
       [id]
     );
 
-    const submittedItemIds = new Set(
-      items.map((r) => Number(r.id)).filter((x) => Number.isFinite(x) && x > 0)
+    const existingItemIds = new Set(
+      dbItems.map((r) => Number(r.id)).filter((x) => Number.isFinite(x) && x > 0)
     );
 
-    // ---------------------------------------------------
-    // DELETE REMOVED ITEMS FROM PURCHASE/STOCK
-    // ---------------------------------------------------
+    const submittedExistingIds = new Set(
+      items
+        .map((r) => Number(r.id))
+        .filter((x) => Number.isFinite(x) && x > 0)
+    );
+
     for (const dbRow of dbItems) {
       const dbItemId = Number(dbRow.id);
-      if (!submittedItemIds.has(dbItemId)) {
+      if (!submittedExistingIds.has(dbItemId)) {
         await deletePurchaseItemAndMaybeVehicleMaster(conn, {
           purchaseId: id,
           itemId: dbItemId,
@@ -1651,9 +1686,6 @@ exports.updatePurchaseById = async (req, res) => {
       }
     }
 
-    // ---------------------------------------------------
-    // If all items removed -> delete full purchase header
-    // ---------------------------------------------------
     if (!items.length) {
       const deletedPurchase = await deletePurchaseHeaderIfEmpty(conn, id);
 
@@ -1668,7 +1700,6 @@ exports.updatePurchaseById = async (req, res) => {
       });
     }
 
-    // Refresh current map after deletes
     const [dbItemsAfterDelete] = await conn.query(
       `
       SELECT id, contact_vehicle_id
@@ -1679,16 +1710,14 @@ exports.updatePurchaseById = async (req, res) => {
     );
 
     const currentMap = new Map(
-      dbItemsAfterDelete.map((r) => [Number(r.id), r.contact_vehicle_id ? Number(r.contact_vehicle_id) : null])
+      dbItemsAfterDelete.map((r) => [
+        Number(r.id),
+        r.contact_vehicle_id ? Number(r.contact_vehicle_id) : null,
+      ])
     );
 
     for (const row of items) {
-      const itemId = Number(row.id);
-      if (!itemId || !currentMap.has(itemId)) {
-        throw new Error(`Invalid item id: ${row.id}`);
-      }
-
-      const currentLinkedVehicleId = currentMap.get(itemId);
+      const itemId = Number(row.id || 0);
 
       const engine_number = normalizeToken(row.engine_number || "");
       const chassis_number = normalizeToken(row.chassis_number || "");
@@ -1717,11 +1746,11 @@ exports.updatePurchaseById = async (req, res) => {
         `
         SELECT id
         FROM vehicle_purchase_items
-        WHERE id <> ?
+        WHERE purchase_id <> ?
           AND (chassis_number = ? OR engine_number = ?)
         LIMIT 1
         `,
-        [itemId, chassis_number, engine_number]
+        [id, chassis_number, engine_number]
       );
 
       if (dupItemRows.length) {
@@ -1730,83 +1759,157 @@ exports.updatePurchaseById = async (req, res) => {
         );
       }
 
-      const ensured = await ensureVehicleMasterForPurchaseItem(
-        conn,
-        {
-          purchaseId: id,
-          linkedVehicleId: currentLinkedVehicleId,
-          contact_id: null,
-          engine_number,
-          chassis_number,
-          model_id,
-          variant_id,
-          color,
-          vehicle_make: "HERO BIKE",
-          vehicle_model: null,
-        },
-        schema
-      );
+      if (itemId > 0) {
+        if (!currentMap.has(itemId)) {
+          throw new Error(`Invalid item id: ${row.id}`);
+        }
 
-      if (schema.itemCols.has("current_branch_id")) {
-        await conn.query(
-          `
-          UPDATE vehicle_purchase_items
-          SET
-            current_branch_id = ?,
-            contact_vehicle_id = ?,
-            engine_number = ?,
-            chassis_number = ?,
-            model_id = ?,
-            variant_id = ?,
-            color = ?,
-            ${priceCol} = ?,
-            status_code = 'in_stock',
-            existing_vehicle_id = NULL,
-            existing_sale_id = NULL
-          WHERE id = ? AND purchase_id = ?
-          `,
-          [
-            final_branch_id,
-            ensured.vehicleId,
+        const currentLinkedVehicleId = currentMap.get(itemId);
+
+        const ensured = await ensureVehicleMasterForPurchaseItem(
+          conn,
+          {
+            purchaseId: id,
+            linkedVehicleId: currentLinkedVehicleId,
+            contact_id: null,
             engine_number,
             chassis_number,
             model_id,
             variant_id,
             color,
-            purchase_price,
-            itemId,
-            id,
-          ]
+            vehicle_make: "HERO BIKE",
+            vehicle_model: null,
+          },
+          schema
         );
+
+        if (schema.itemCols.has("current_branch_id")) {
+          await conn.query(
+            `
+            UPDATE vehicle_purchase_items
+            SET
+              current_branch_id = ?,
+              contact_vehicle_id = ?,
+              engine_number = ?,
+              chassis_number = ?,
+              model_id = ?,
+              variant_id = ?,
+              color = ?,
+              ${priceCol} = ?,
+              status_code = 'in_stock',
+              existing_vehicle_id = NULL,
+              existing_sale_id = NULL
+            WHERE id = ? AND purchase_id = ?
+            `,
+            [
+              final_branch_id,
+              ensured.vehicleId,
+              engine_number,
+              chassis_number,
+              model_id,
+              variant_id,
+              color,
+              purchase_price,
+              itemId,
+              id,
+            ]
+          );
+        } else {
+          await conn.query(
+            `
+            UPDATE vehicle_purchase_items
+            SET
+              contact_vehicle_id = ?,
+              engine_number = ?,
+              chassis_number = ?,
+              model_id = ?,
+              variant_id = ?,
+              color = ?,
+              ${priceCol} = ?,
+              status_code = 'in_stock',
+              existing_vehicle_id = NULL,
+              existing_sale_id = NULL
+            WHERE id = ? AND purchase_id = ?
+            `,
+            [
+              ensured.vehicleId,
+              engine_number,
+              chassis_number,
+              model_id,
+              variant_id,
+              color,
+              purchase_price,
+              itemId,
+              id,
+            ]
+          );
+        }
       } else {
-        await conn.query(
-          `
-          UPDATE vehicle_purchase_items
-          SET
-            contact_vehicle_id = ?,
-            engine_number = ?,
-            chassis_number = ?,
-            model_id = ?,
-            variant_id = ?,
-            color = ?,
-            ${priceCol} = ?,
-            status_code = 'in_stock',
-            existing_vehicle_id = NULL,
-            existing_sale_id = NULL
-          WHERE id = ? AND purchase_id = ?
-          `,
-          [
-            ensured.vehicleId,
+        const ensured = await ensureVehicleMasterForPurchaseItem(
+          conn,
+          {
+            purchaseId: id,
+            linkedVehicleId: null,
+            contact_id: null,
             engine_number,
             chassis_number,
             model_id,
             variant_id,
             color,
-            purchase_price,
-            itemId,
-            id,
-          ]
+            vehicle_make: "HERO BIKE",
+            vehicle_model: null,
+          },
+          schema
         );
+
+        if (schema.itemCols.has("current_branch_id")) {
+          await conn.query(
+            `
+            INSERT INTO vehicle_purchase_items
+              (purchase_id, current_branch_id, contact_vehicle_id, chassis_number, engine_number, model_id, variant_id, color, ${priceCol},
+               status_code, existing_vehicle_id, existing_sale_id)
+            VALUES
+              (?,?,?,?,?,?,?,?,?,?,?,?)
+            `,
+            [
+              id,
+              final_branch_id,
+              ensured.vehicleId,
+              chassis_number,
+              engine_number,
+              model_id,
+              variant_id,
+              color,
+              purchase_price,
+              "in_stock",
+              null,
+              null,
+            ]
+          );
+        } else {
+          await conn.query(
+            `
+            INSERT INTO vehicle_purchase_items
+              (purchase_id, contact_vehicle_id, chassis_number, engine_number, model_id, variant_id, color, ${priceCol},
+               status_code, existing_vehicle_id, existing_sale_id)
+            VALUES
+              (?,?,?,?,?,?,?,?,?,?,?)
+            `,
+            [
+              id,
+              ensured.vehicleId,
+              chassis_number,
+              engine_number,
+              model_id,
+              variant_id,
+              color,
+              purchase_price,
+              "in_stock",
+              null,
+              null,
+            ]
+          );
+        }
       }
     }
 

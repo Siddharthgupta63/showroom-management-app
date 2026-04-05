@@ -144,7 +144,7 @@ export default function PurchasesListPage() {
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search by supplier / invoice no / purchase id"
+                 placeholder="Search by supplier / invoice no / purchase id / chassis / engine"
                   className="mt-1 w-full border rounded-lg px-3 py-2"
                 />
               </div>
