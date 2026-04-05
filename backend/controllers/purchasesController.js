@@ -1443,7 +1443,7 @@ exports.updatePurchaseById = async (req, res) => {
     }
 
     const [existingRows] = await conn.query(
-      `SELECT id FROM vehicle_purchases WHERE id = ? LIMIT 1`,
+      `SELECT id, branch_id FROM vehicle_purchases WHERE id = ? LIMIT 1`,
       [id]
     );
 
@@ -1490,6 +1490,11 @@ exports.updatePurchaseById = async (req, res) => {
     const notes =
       body.notes != null && String(body.notes).trim() !== ""
         ? String(body.notes)
+        : null;
+
+    const requested_branch_id =
+      body.branch_id != null && String(body.branch_id).trim() !== ""
+        ? Number(body.branch_id)
         : null;
 
     const items = Array.isArray(body.items) ? body.items : [];
@@ -1542,6 +1547,28 @@ exports.updatePurchaseById = async (req, res) => {
 
     await conn.beginTransaction();
 
+    // -----------------------------------
+    // Resolve final branch safely
+    // -----------------------------------
+    let final_branch_id = requested_branch_id;
+
+    if (!Number.isFinite(final_branch_id) || final_branch_id <= 0) {
+      const existingBranchId = existingRows[0]?.branch_id ? Number(existingRows[0].branch_id) : null;
+      final_branch_id = existingBranchId || null;
+    }
+
+    if ((!Number.isFinite(final_branch_id) || final_branch_id <= 0) && schema.purchaseCols.has("branch_id")) {
+      final_branch_id = await getDefaultBranchId(conn);
+    }
+
+    if (schema.purchaseCols.has("branch_id") && !final_branch_id) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "No active branch found. Please create or activate a branch first.",
+      });
+    }
+
     // ----------------------------
     // Update header first
     // ----------------------------
@@ -1562,6 +1589,11 @@ exports.updatePurchaseById = async (req, res) => {
 
     updates.push("invoice_number = ?");
     values.push(invoice_number);
+
+    if (schema.purchaseCols.has("branch_id")) {
+      updates.push("branch_id = ?");
+      values.push(final_branch_id);
+    }
 
     if (schema.hasInvoiceDate) {
       updates.push("invoice_date = ?");
@@ -1599,10 +1631,6 @@ exports.updatePurchaseById = async (req, res) => {
       WHERE purchase_id = ?
       `,
       [id]
-    );
-
-    const allowedMap = new Map(
-      dbItems.map((r) => [Number(r.id), r.contact_vehicle_id ? Number(r.contact_vehicle_id) : null])
     );
 
     const submittedItemIds = new Set(
@@ -1719,34 +1747,67 @@ exports.updatePurchaseById = async (req, res) => {
         schema
       );
 
-      await conn.query(
-        `
-        UPDATE vehicle_purchase_items
-        SET
-          contact_vehicle_id = ?,
-          engine_number = ?,
-          chassis_number = ?,
-          model_id = ?,
-          variant_id = ?,
-          color = ?,
-          ${priceCol} = ?,
-          status_code = 'in_stock',
-          existing_vehicle_id = NULL,
-          existing_sale_id = NULL
-        WHERE id = ? AND purchase_id = ?
-        `,
-        [
-          ensured.vehicleId,
-          engine_number,
-          chassis_number,
-          model_id,
-          variant_id,
-          color,
-          purchase_price,
-          itemId,
-          id,
-        ]
-      );
+      if (schema.itemCols.has("current_branch_id")) {
+        await conn.query(
+          `
+          UPDATE vehicle_purchase_items
+          SET
+            current_branch_id = ?,
+            contact_vehicle_id = ?,
+            engine_number = ?,
+            chassis_number = ?,
+            model_id = ?,
+            variant_id = ?,
+            color = ?,
+            ${priceCol} = ?,
+            status_code = 'in_stock',
+            existing_vehicle_id = NULL,
+            existing_sale_id = NULL
+          WHERE id = ? AND purchase_id = ?
+          `,
+          [
+            final_branch_id,
+            ensured.vehicleId,
+            engine_number,
+            chassis_number,
+            model_id,
+            variant_id,
+            color,
+            purchase_price,
+            itemId,
+            id,
+          ]
+        );
+      } else {
+        await conn.query(
+          `
+          UPDATE vehicle_purchase_items
+          SET
+            contact_vehicle_id = ?,
+            engine_number = ?,
+            chassis_number = ?,
+            model_id = ?,
+            variant_id = ?,
+            color = ?,
+            ${priceCol} = ?,
+            status_code = 'in_stock',
+            existing_vehicle_id = NULL,
+            existing_sale_id = NULL
+          WHERE id = ? AND purchase_id = ?
+          `,
+          [
+            ensured.vehicleId,
+            engine_number,
+            chassis_number,
+            model_id,
+            variant_id,
+            color,
+            purchase_price,
+            itemId,
+            id,
+          ]
+        );
+      }
     }
 
     await conn.commit();
@@ -1754,6 +1815,7 @@ exports.updatePurchaseById = async (req, res) => {
     return res.json({
       success: true,
       message: "Purchase updated successfully",
+      branch_id: final_branch_id || null,
     });
   } catch (e) {
     try {
