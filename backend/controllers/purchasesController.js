@@ -138,6 +138,22 @@ async function getSchemaCached() {
   return _schemaCache;
 }
 
+async function getDefaultBranchId(conn) {
+  const [rows] = await conn.query(
+    `
+    SELECT id
+    FROM showroom_branches
+    WHERE is_active = 1
+    ORDER BY
+      CASE WHEN LOWER(TRIM(branch_name)) = LOWER('Main Showroom') THEN 0 ELSE 1 END,
+      id ASC
+    LIMIT 1
+    `
+  );
+
+  return rows?.[0]?.id ? Number(rows[0].id) : null;
+}
+
 function purchaseAmountSelectExpr(pAlias, headerAmountCol) {
   // Always return as purchase_amount for frontend consistency
   if (headerAmountCol) return `${pAlias}.${headerAmountCol} AS purchase_amount`;
@@ -660,6 +676,11 @@ exports.createPurchaseFromInvoice = async (req, res) => {
         ? Number(body.contact_id)
         : null;
 
+    const requested_branch_id =
+      body.branch_id != null && String(body.branch_id).trim() !== ""
+        ? Number(body.branch_id)
+        : null;
+
     const vehicle_make = body.vehicle_make ? String(body.vehicle_make).trim() : "HERO BIKE";
     const invoice_file = body.invoice_file ? String(body.invoice_file).trim() : null;
 
@@ -669,9 +690,24 @@ exports.createPurchaseFromInvoice = async (req, res) => {
 
     await conn.beginTransaction();
 
-    // 1) Create purchase header
+    // 1) Resolve branch safely without breaking old logic
     const created_by = req.user?.id || null;
 
+    let final_branch_id = requested_branch_id;
+
+    if (!Number.isFinite(final_branch_id) || final_branch_id <= 0) {
+      final_branch_id = await getDefaultBranchId(conn);
+    }
+
+    if (!final_branch_id) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "No active branch found. Please create or activate a branch first.",
+      });
+    }
+
+    // 2) Create purchase header
     const headerCols = [
       "purchase_from",
       "transporter_name",
@@ -687,6 +723,12 @@ exports.createPurchaseFromInvoice = async (req, res) => {
       transport_vehicle_number,
       invoice_number,
     ];
+
+    // add branch_id only if column exists
+    if (schema.purchaseCols.has("branch_id")) {
+      headerCols.push("branch_id");
+      headerVals.push(final_branch_id);
+    }
 
     if (schema.hasInvoiceDate) {
       headerCols.push("invoice_date");
@@ -720,7 +762,7 @@ exports.createPurchaseFromInvoice = async (req, res) => {
     let inserted = 0;
     let skipped = 0;
 
-    // 2) Each row -> create/reuse/restore vehicle master safely
+    // 3) Each row -> create/reuse/restore vehicle master safely
     for (const v of vehicles) {
       const engine_number = normalizeToken(v.engine_number || "");
       const chassis_number = normalizeToken(v.chassis_number || "");
@@ -774,28 +816,55 @@ exports.createPurchaseFromInvoice = async (req, res) => {
 
       const priceCol = schema.itemPriceCol || "purchase_price";
 
-      await conn.query(
-        `
-        INSERT INTO vehicle_purchase_items
-          (purchase_id, contact_vehicle_id, chassis_number, engine_number, model_id, variant_id, color, ${priceCol},
-           status_code, existing_vehicle_id, existing_sale_id)
-        VALUES
-          (?,?,?,?,?,?,?,?,?,?,?)
-        `,
-        [
-          purchase_id,
-          contact_vehicle_id,
-          chassis_number,
-          engine_number,
-          model_id,
-          variant_id,
-          color,
-          rowPrice,
-          itemStatusCode,
-          existing_vehicle_id,
-          existing_sale_id,
-        ]
-      );
+      // add current_branch_id only if column exists
+      if (schema.itemCols.has("current_branch_id")) {
+        await conn.query(
+          `
+          INSERT INTO vehicle_purchase_items
+            (purchase_id, current_branch_id, contact_vehicle_id, chassis_number, engine_number, model_id, variant_id, color, ${priceCol},
+             status_code, existing_vehicle_id, existing_sale_id)
+          VALUES
+            (?,?,?,?,?,?,?,?,?,?,?,?)
+          `,
+          [
+            purchase_id,
+            final_branch_id,
+            contact_vehicle_id,
+            chassis_number,
+            engine_number,
+            model_id,
+            variant_id,
+            color,
+            rowPrice,
+            itemStatusCode,
+            existing_vehicle_id,
+            existing_sale_id,
+          ]
+        );
+      } else {
+        await conn.query(
+          `
+          INSERT INTO vehicle_purchase_items
+            (purchase_id, contact_vehicle_id, chassis_number, engine_number, model_id, variant_id, color, ${priceCol},
+             status_code, existing_vehicle_id, existing_sale_id)
+          VALUES
+            (?,?,?,?,?,?,?,?,?,?,?)
+          `,
+          [
+            purchase_id,
+            contact_vehicle_id,
+            chassis_number,
+            engine_number,
+            model_id,
+            variant_id,
+            color,
+            rowPrice,
+            itemStatusCode,
+            existing_vehicle_id,
+            existing_sale_id,
+          ]
+        );
+      }
     }
 
     await conn.commit();
@@ -803,6 +872,7 @@ exports.createPurchaseFromInvoice = async (req, res) => {
     return res.json({
       success: true,
       purchase_id,
+      branch_id: final_branch_id,
       summary: { inserted, skipped, total: vehicles.length },
     });
   } catch (e) {
