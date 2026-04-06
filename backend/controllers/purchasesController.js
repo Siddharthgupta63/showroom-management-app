@@ -787,32 +787,41 @@ exports.createPurchaseFromInvoice = async (req, res) => {
       let existing_vehicle_id = previewStatus.vehicle_id;
       let existing_sale_id = previewStatus.sale_id;
 
-      if (["NEW", "UNLINKED", "RESTORABLE"].includes(previewStatus.code)) {
-        const ensured = await ensureVehicleMasterForPurchaseItem(
-          conn,
-          {
-            purchaseId: purchase_id,
-            linkedVehicleId: null,
-            contact_id,
-            engine_number,
-            chassis_number,
-            model_id,
-            variant_id,
-            color,
-            vehicle_make,
-            vehicle_model,
-          },
-          schema
-        );
+    // ✅ SAFE DUPLICATE HANDLING (keeps old logic + prevents DB crash)
+// ✅ SAFE DUPLICATE HANDLING (keeps old logic + prevents DB crash)
+if (["NEW", "UNLINKED", "RESTORABLE"].includes(previewStatus.code)) {
+  try {
+    const ensured = await ensureVehicleMasterForPurchaseItem(
+      conn,
+      {
+        purchaseId: purchase_id,
+        linkedVehicleId: null,
+        contact_id,
+        engine_number,
+        chassis_number,
+        model_id,
+        variant_id,
+        color,
+        vehicle_make,
+        vehicle_model,
+      },
+      schema
+    );
 
-        contact_vehicle_id = ensured.vehicleId;
-        itemStatusCode = "in_stock";
-        existing_vehicle_id = null;
-        existing_sale_id = null;
-        inserted++;
-      } else {
-        skipped++;
-      }
+    contact_vehicle_id = ensured.vehicleId;
+    itemStatusCode = "in_stock";
+    existing_vehicle_id = null;
+    existing_sale_id = null;
+    inserted++;
+  } catch (err) {
+    console.warn("⚠️ Skipping duplicate vehicle:", chassis_number, err.message);
+    skipped++;
+    continue;
+  }
+} else {
+  skipped++;
+  continue;
+}
 
       const priceCol = schema.itemPriceCol || "purchase_price";
 

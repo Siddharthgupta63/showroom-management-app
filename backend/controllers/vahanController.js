@@ -691,7 +691,15 @@ exports.createVahan = async (req, res) => {
       sqlDate(req.body.application_filled_date) ||
       null;
 
-    const paymentAmount = req.body.payment_amount ?? null;
+    // ✅ SAFE NUMBER PARSE (prevents 'MP54ZD2115' error)
+let paymentAmount = req.body.payment_amount;
+
+if (paymentAmount === "" || paymentAmount === undefined || paymentAmount === null) {
+  paymentAmount = null;
+} else {
+  const n = Number(paymentAmount);
+  paymentAmount = Number.isFinite(n) ? n : null;
+}
 
     const oldStatus = String(req.body.status || "").trim().toLowerCase();
     const oldCompletedDate = sqlDate(req.body.completed_date);
@@ -802,7 +810,15 @@ exports.saveForm = async (req, res) => {
     const fillDate = sqlDate(
       req.body.vahan_fill_date || req.body.application_filled_date
     );
-    const paymentAmount = req.body.payment_amount ?? null;
+   // ✅ SAFE NUMBER PARSE (prevents 'MP54ZD2115' error)
+let paymentAmount = req.body.payment_amount;
+
+if (paymentAmount === "" || paymentAmount === undefined || paymentAmount === null) {
+  paymentAmount = null;
+} else {
+  const n = Number(paymentAmount);
+  paymentAmount = Number.isFinite(n) ? n : null;
+}
 
     if (!applicationNumber) {
       return res
