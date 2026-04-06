@@ -1552,30 +1552,55 @@ exports.importStockExcel = [
 exports.getBranchSummary = async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT
-        sb.id AS branch_id,
-        sb.branch_name,
+  SELECT
+    sb.id AS branch_id,
+    sb.branch_name,
 
-        COUNT(vpi.id) AS total_count,
+    COUNT(vpi.id) AS total_count,
 
-        SUM(CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'in_stock' THEN 1 ELSE 0 END) AS in_stock_count,
-        SUM(CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'sold' THEN 1 ELSE 0 END) AS sold_count,
-        SUM(CASE WHEN LOWER(COALESCE(vpi.status_code, '')) = 'delivered' THEN 1 ELSE 0 END) AS delivered_count,
-        SUM(
-          CASE
-            WHEN LOWER(COALESCE(vpi.status_code, '')) NOT IN ('in_stock', 'sold', 'delivered')
-            THEN 1
-            ELSE 0
-          END
-        ) AS other_count
+    SUM(
+      CASE
+        WHEN vpi.id IS NOT NULL
+         AND LOWER(COALESCE(vpi.status_code, '')) = 'in_stock'
+        THEN 1
+        ELSE 0
+      END
+    ) AS in_stock_count,
 
-      FROM showroom_branches sb
-      LEFT JOIN vehicle_purchase_items vpi
-        ON vpi.current_branch_id = sb.id
-      WHERE sb.is_active = 1
-      GROUP BY sb.id, sb.branch_name
-      ORDER BY sb.branch_name ASC
-    `);
+    SUM(
+      CASE
+        WHEN vpi.id IS NOT NULL
+         AND LOWER(COALESCE(vpi.status_code, '')) = 'sold'
+        THEN 1
+        ELSE 0
+      END
+    ) AS sold_count,
+
+    SUM(
+      CASE
+        WHEN vpi.id IS NOT NULL
+         AND LOWER(COALESCE(vpi.status_code, '')) = 'delivered'
+        THEN 1
+        ELSE 0
+      END
+    ) AS delivered_count,
+
+    SUM(
+      CASE
+        WHEN vpi.id IS NOT NULL
+         AND LOWER(COALESCE(vpi.status_code, '')) NOT IN ('in_stock', 'sold', 'delivered')
+        THEN 1
+        ELSE 0
+      END
+    ) AS other_count
+
+  FROM showroom_branches sb
+  LEFT JOIN vehicle_purchase_items vpi
+    ON vpi.current_branch_id = sb.id
+  WHERE sb.is_active = 1
+  GROUP BY sb.id, sb.branch_name
+  ORDER BY sb.branch_name ASC
+`);
 
     return res.json({
       success: true,
