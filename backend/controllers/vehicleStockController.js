@@ -74,6 +74,394 @@ async function getDefaultBranchId(conn) {
   return rows?.[0]?.id || null;
 }
 
+function normalizeToken(tok) {
+  return String(tok || "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
+}
+
+let _schemaCache = null;
+let _schemaCacheAt = 0;
+const SCHEMA_CACHE_TTL_MS = 30 * 1000;
+
+async function getSchemaCached() {
+  const now = Date.now();
+  if (_schemaCache && now - _schemaCacheAt < SCHEMA_CACHE_TTL_MS) {
+    return _schemaCache;
+  }
+
+  const [cvCols] = await db.query(`SHOW COLUMNS FROM contact_vehicles`);
+  const [itemCols] = await db.query(`SHOW COLUMNS FROM vehicle_purchase_items`);
+
+  const contactVehicleCols = new Set(cvCols.map((c) => String(c.Field)));
+  const itemColsSet = new Set(itemCols.map((c) => String(c.Field)));
+
+  _schemaCache = {
+    contactVehicleCols,
+    itemCols: itemColsSet,
+    hasCvPurchaseId: contactVehicleCols.has("purchase_id"),
+  };
+
+  _schemaCacheAt = now;
+  return _schemaCache;
+}
+
+async function resolveVehicleModelText(conn, model_id, variant_id) {
+  if (variant_id) {
+    const [variantRows] = await conn.query(
+      `SELECT variant_name FROM vehicle_variants WHERE id = ? LIMIT 1`,
+      [variant_id]
+    );
+    if (variantRows.length) {
+      const txt = String(variantRows[0].variant_name || "").trim();
+      if (txt) return txt;
+    }
+  }
+
+  if (model_id) {
+    const [modelRows] = await conn.query(
+      `SELECT model_name FROM vehicle_models WHERE id = ? LIMIT 1`,
+      [model_id]
+    );
+    if (modelRows.length) {
+      const txt = String(modelRows[0].model_name || "").trim();
+      if (txt) return txt;
+    }
+  }
+
+  return null;
+}
+
+async function findVehicleMasterMatch(connOrDb, engine_number, chassis_number, opts = {}) {
+  const eng = normalizeToken(engine_number);
+  const chs = normalizeToken(chassis_number);
+  const excludeVehicleId = Number(opts.excludeVehicleId || 0);
+
+  if (!eng || !chs) return null;
+
+  const [rows] = await connOrDb.query(
+    `
+    SELECT
+      cv.id,
+      cv.contact_id,
+      cv.is_deleted,
+      cv.deleted_at,
+      cv.deleted_by,
+      ${opts.includePurchaseId ? "cv.purchase_id," : ""}
+      (
+        SELECT s.id
+        FROM sales s
+        WHERE s.contact_vehicle_id = cv.id
+          AND s.is_cancelled = 0
+        ORDER BY s.id DESC
+        LIMIT 1
+      ) AS active_sale_id,
+      (
+        SELECT COUNT(*)
+        FROM sale_vehicle_links svl
+        WHERE svl.vehicle_id = cv.id
+      ) AS link_count
+    FROM contact_vehicles cv
+    WHERE cv.id <> ?
+      AND (cv.chassis_number = ? OR cv.engine_number = ?)
+    ORDER BY cv.is_deleted ASC, cv.id DESC
+    LIMIT 1
+    `,
+    [excludeVehicleId, chs, eng]
+  );
+
+  return rows?.[0] || null;
+}
+
+async function restoreVehicleMaster(conn, vehicleId, purchaseId, schema) {
+  const sets = [
+    "is_deleted = 0",
+    "deleted_at = NULL",
+    "deleted_by = NULL",
+  ];
+  const vals = [];
+
+  if (schema.hasCvPurchaseId) {
+    sets.push("purchase_id = COALESCE(purchase_id, ?)");
+    vals.push(purchaseId || null);
+  }
+
+  vals.push(vehicleId);
+
+  await conn.query(
+    `
+    UPDATE contact_vehicles
+    SET ${sets.join(", ")}
+    WHERE id = ?
+    `,
+    vals
+  );
+}
+
+async function updateVehicleMasterFields(
+  conn,
+  vehicleId,
+  { engine_number, chassis_number, model_id, variant_id, color, vehicle_make, vehicle_model, purchaseId },
+  schema
+) {
+  const updates = [
+    "engine_number = ?",
+    "chassis_number = ?",
+    "model_id = ?",
+    "variant_id = ?",
+    "color = ?",
+  ];
+
+  const vals = [engine_number, chassis_number, model_id, variant_id, color];
+
+  if (schema.contactVehicleCols.has("vehicle_make")) {
+    updates.push("vehicle_make = ?");
+    vals.push(vehicle_make || null);
+  }
+
+  if (schema.contactVehicleCols.has("vehicle_model")) {
+    updates.push("vehicle_model = ?");
+    vals.push(vehicle_model || null);
+  }
+
+  if (schema.hasCvPurchaseId) {
+    updates.push("purchase_id = COALESCE(purchase_id, ?)");
+    vals.push(purchaseId || null);
+  }
+
+  vals.push(vehicleId);
+
+  await conn.query(
+    `
+    UPDATE contact_vehicles
+    SET ${updates.join(", ")}
+    WHERE id = ?
+    `,
+    vals
+  );
+}
+
+async function createVehicleMaster(
+  conn,
+  {
+    purchaseId,
+    contact_id,
+    engine_number,
+    chassis_number,
+    model_id,
+    variant_id,
+    color,
+    vehicle_make,
+    vehicle_model,
+  },
+  schema
+) {
+  const cols = [
+    "contact_id",
+    "chassis_number",
+    "engine_number",
+    "model_id",
+    "variant_id",
+    "vehicle_make",
+    "vehicle_model",
+    "color",
+  ];
+
+  const vals = [
+    contact_id ?? null,
+    chassis_number,
+    engine_number,
+    model_id,
+    variant_id,
+    vehicle_make || null,
+    vehicle_model || null,
+    color || null,
+  ];
+
+  if (schema.hasCvPurchaseId) {
+    cols.push("purchase_id");
+    vals.push(purchaseId || null);
+  }
+
+  const [ins] = await conn.query(
+    `INSERT INTO contact_vehicles (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`,
+    vals
+  );
+
+  return ins.insertId;
+}
+
+async function ensureVehicleMasterForStockItem(
+  conn,
+  {
+    purchaseId,
+    linkedVehicleId,
+    contact_id,
+    engine_number,
+    chassis_number,
+    model_id,
+    variant_id,
+    color,
+    vehicle_make,
+    vehicle_model,
+  },
+  schema
+) {
+  const eng = normalizeToken(engine_number);
+  const chs = normalizeToken(chassis_number);
+
+  if (!eng || !chs) {
+    throw new Error("Engine and chassis are required");
+  }
+
+  const modelText =
+    vehicle_model ||
+    (await resolveVehicleModelText(conn, model_id, variant_id)) ||
+    null;
+
+  if (linkedVehicleId) {
+    const [linkedRows] = await conn.query(
+      `
+      SELECT
+        cv.id,
+        cv.contact_id,
+        cv.is_deleted,
+        (
+          SELECT s.id
+          FROM sales s
+          WHERE s.contact_vehicle_id = cv.id
+            AND s.is_cancelled = 0
+          ORDER BY s.id DESC
+          LIMIT 1
+        ) AS active_sale_id,
+        (
+          SELECT COUNT(*)
+          FROM sale_vehicle_links svl
+          WHERE svl.vehicle_id = cv.id
+        ) AS link_count
+      FROM contact_vehicles cv
+      WHERE cv.id = ?
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [linkedVehicleId]
+    );
+
+    if (linkedRows.length) {
+      const linked = linkedRows[0];
+
+      if (Number(linked.is_deleted || 0) === 1) {
+        if (linked.contact_id || linked.active_sale_id || Number(linked.link_count || 0) > 0) {
+          throw new Error(
+            `Deleted vehicle master cannot be restored because it is already used (Vehicle ID: ${linked.id})`
+          );
+        }
+
+        await restoreVehicleMaster(conn, linked.id, purchaseId, schema);
+      }
+
+      await updateVehicleMasterFields(
+        conn,
+        linked.id,
+        {
+          purchaseId,
+          engine_number: eng,
+          chassis_number: chs,
+          model_id,
+          variant_id,
+          color,
+          vehicle_make,
+          vehicle_model: modelText,
+        },
+        schema
+      );
+
+      return { vehicleId: linked.id, action: "LINKED_EXISTING" };
+    }
+  }
+
+  const match = await findVehicleMasterMatch(conn, eng, chs, {
+    excludeVehicleId: linkedVehicleId || 0,
+    includePurchaseId: true,
+  });
+
+  if (!match) {
+    const newId = await createVehicleMaster(
+      conn,
+      {
+        purchaseId,
+        contact_id,
+        engine_number: eng,
+        chassis_number: chs,
+        model_id,
+        variant_id,
+        color,
+        vehicle_make,
+        vehicle_model: modelText,
+      },
+      schema
+    );
+
+    return { vehicleId: newId, action: "CREATED_NEW" };
+  }
+
+  if (match.active_sale_id) {
+    throw new Error(
+      `Engine/chassis already sold (Vehicle ID: ${match.id}, Sale ID: ${match.active_sale_id})`
+    );
+  }
+
+  if (Number(match.is_deleted || 0) === 1) {
+    if (match.contact_id || Number(match.link_count || 0) > 0) {
+      throw new Error(
+        `Deleted vehicle master already has protected history (Vehicle ID: ${match.id})`
+      );
+    }
+
+    await restoreVehicleMaster(conn, match.id, purchaseId, schema);
+
+    await updateVehicleMasterFields(
+      conn,
+      match.id,
+      {
+        purchaseId,
+        engine_number: eng,
+        chassis_number: chs,
+        model_id,
+        variant_id,
+        color,
+        vehicle_make,
+        vehicle_model: modelText,
+      },
+      schema
+    );
+
+    return { vehicleId: Number(match.id), action: "RESTORED_DELETED" };
+  }
+
+  if (match.contact_id) {
+    throw new Error(
+      `Engine/chassis already exists in vehicle master (Vehicle ID: ${match.id})`
+    );
+  }
+
+  await updateVehicleMasterFields(
+    conn,
+    match.id,
+    {
+      purchaseId,
+      engine_number: eng,
+      chassis_number: chs,
+      model_id,
+      variant_id,
+      color,
+      vehicle_make,
+      vehicle_model: modelText,
+    },
+    schema
+  );
+
+  return { vehicleId: Number(match.id), action: "REUSED_UNLINKED" };
+}
+
 async function getModelIdByName(name) {
   const modelName = normalizeStr(name);
   if (!modelName) return null;
@@ -325,6 +713,7 @@ exports.createPurchase = async (req, res) => {
   let conn;
   try {
     const userId = req.user?.id || null;
+    const schema = await getSchemaCached();
 
     const purchase_from = normalizeStr(req.body?.purchase_from);
     const entry_type = normalizeStr(req.body?.entry_type || "invoice").toLowerCase();
@@ -337,9 +726,12 @@ exports.createPurchase = async (req, res) => {
     const invoice_number = normalizeStr(req.body?.invoice_number) || null;
     const invoice_date = parseNullableDate(req.body?.invoice_date);
     const purchase_date = parseNullableDate(req.body?.purchase_date);
-    const total_amount = req.body?.total_amount === "" || req.body?.total_amount === undefined || req.body?.total_amount === null
-      ? 0
-      : Number(req.body.total_amount);
+    const total_amount =
+      req.body?.total_amount === "" ||
+      req.body?.total_amount === undefined ||
+      req.body?.total_amount === null
+        ? 0
+        : Number(req.body.total_amount);
     const notes = normalizeStr(req.body?.notes) || null;
 
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -353,7 +745,9 @@ exports.createPurchase = async (req, res) => {
     }
 
     if (!items.length) {
-      return res.status(400).json({ success: false, message: "At least one stock item is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "At least one stock item is required" });
     }
 
     if (branch_id && !(await ensureBranchExists(branch_id))) {
@@ -371,29 +765,36 @@ exports.createPurchase = async (req, res) => {
     await conn.beginTransaction();
 
     if (!branch_id) {
-  branch_id = await getDefaultBranchId(conn);
-}
+      branch_id = await getDefaultBranchId(conn);
+    }
 
-if (!branch_id) {
-  await conn.rollback();
-  return res.status(400).json({
-    success: false,
-    message: "No active branch found. Please create/activate a branch first.",
-  });
-}
+    if (!branch_id) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "No active branch found. Please create/activate a branch first.",
+      });
+    }
 
     for (let i = 0; i < items.length; i++) {
       const row = items[i] || {};
-      const chassis_number = normalizeUpper(row.chassis_number);
-      const engine_number = normalizeUpper(row.engine_number);
+      const chassis_number = normalizeToken(row.chassis_number);
+      const engine_number = normalizeToken(row.engine_number);
 
       if (!chassis_number) {
         await conn.rollback();
-        return res.status(400).json({ success: false, message: `Row ${i + 1}: chassis_number is required` });
+        return res.status(400).json({
+          success: false,
+          message: `Row ${i + 1}: chassis_number is required`,
+        });
       }
+
       if (!engine_number) {
         await conn.rollback();
-        return res.status(400).json({ success: false, message: `Row ${i + 1}: engine_number is required` });
+        return res.status(400).json({
+          success: false,
+          message: `Row ${i + 1}: engine_number is required`,
+        });
       }
 
       const [dupRows] = await conn.query(
@@ -458,45 +859,67 @@ if (!branch_id) {
     const purchaseId = purchaseResult.insertId;
 
     for (const row of items) {
-      const chassis_number = normalizeUpper(row.chassis_number);
-      const engine_number = normalizeUpper(row.engine_number);
+      const chassis_number = normalizeToken(row.chassis_number);
+      const engine_number = normalizeToken(row.engine_number);
       const model_id = parseNullableNumber(row.model_id);
       const variant_id = parseNullableNumber(row.variant_id);
       const color = normalizeStr(row.color) || null;
-      const purchase_price = row.purchase_price === "" || row.purchase_price === undefined || row.purchase_price === null
-        ? 0
-        : Number(row.purchase_price);
+      const purchase_price =
+        row.purchase_price === "" ||
+        row.purchase_price === undefined ||
+        row.purchase_price === null
+          ? 0
+          : Number(row.purchase_price);
       const remarks = normalizeStr(row.remarks) || null;
+
+      const ensured = await ensureVehicleMasterForStockItem(
+        conn,
+        {
+          purchaseId,
+          linkedVehicleId: null,
+          contact_id: null,
+          engine_number,
+          chassis_number,
+          model_id,
+          variant_id,
+          color,
+          vehicle_make: "HERO BIKE",
+          vehicle_model: null,
+        },
+        schema
+      );
 
       await conn.query(
         `
-       INSERT INTO vehicle_purchase_items
-(
-  purchase_id,
-  current_branch_id,
-  chassis_number,
-  engine_number,
-  model_id,
-  variant_id,
-  color,
-  purchase_price,
-  status_code,
-  remarks
-)
-VALUES (?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO vehicle_purchase_items
+        (
+          purchase_id,
+          current_branch_id,
+          contact_vehicle_id,
+          chassis_number,
+          engine_number,
+          model_id,
+          variant_id,
+          color,
+          purchase_price,
+          status_code,
+          remarks
+        )
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
         `,
         [
-  purchaseId,
-  branch_id,
-  chassis_number,
-  engine_number,
-  model_id,              
-  variant_id,
-  color,
-  Number.isFinite(purchase_price) ? purchase_price : 0,
-  "in_stock",
-  remarks,
-]
+          purchaseId,
+          branch_id,
+          ensured.vehicleId,
+          chassis_number,
+          engine_number,
+          model_id,
+          variant_id,
+          color,
+          Number.isFinite(purchase_price) ? purchase_price : 0,
+          "in_stock",
+          remarks,
+        ]
       );
     }
 
@@ -513,7 +936,10 @@ VALUES (?,?,?,?,?,?,?,?,?,?)
       if (conn) await conn.rollback();
     } catch {}
     console.error("stock createPurchase:", e);
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({
+      success: false,
+      message: e.message || "Server error",
+    });
   } finally {
     try {
       if (conn) conn.release();
@@ -848,6 +1274,8 @@ exports.importStockExcel = [
         return res.status(400).json({ success: false, message: "Excel file required" });
       }
 
+      const schema = await getSchemaCached();
+
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.readFile(filepath);
       const ws = wb.worksheets[0];
@@ -869,8 +1297,8 @@ exports.importStockExcel = [
       const rows = [];
       for (let r = 2; r <= ws.rowCount; r++) {
         const row = ws.getRow(r);
-        const chassis_number = normalizeUpper(get(row, "chassis_number"));
-        const engine_number = normalizeUpper(get(row, "engine_number"));
+        const chassis_number = normalizeToken(get(row, "chassis_number"));
+        const engine_number = normalizeToken(get(row, "engine_number"));
 
         if (!chassis_number && !engine_number) continue;
 
@@ -1025,12 +1453,30 @@ exports.importStockExcel = [
       const purchaseId = purchaseResult.insertId;
 
       for (const row of validRows) {
+        const ensured = await ensureVehicleMasterForStockItem(
+          conn,
+          {
+            purchaseId,
+            linkedVehicleId: null,
+            contact_id: null,
+            engine_number: row.engine_number,
+            chassis_number: row.chassis_number,
+            model_id: row.model_id,
+            variant_id: row.variant_id,
+            color: row.color,
+            vehicle_make: "HERO BIKE",
+            vehicle_model: row.model_name || null,
+          },
+          schema
+        );
+
         await conn.query(
           `
           INSERT INTO vehicle_purchase_items
           (
             purchase_id,
             current_branch_id,
+            contact_vehicle_id,
             chassis_number,
             engine_number,
             model_id,
@@ -1041,11 +1487,12 @@ exports.importStockExcel = [
             import_batch_no,
             remarks
           )
-          VALUES (?,?,?,?,?,?,?,?,?,?,?)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
           `,
           [
             purchaseId,
             defaultBranchId,
+            ensured.vehicleId,
             row.chassis_number,
             row.engine_number,
             row.model_id,
@@ -1081,7 +1528,10 @@ exports.importStockExcel = [
         if (conn) await conn.rollback();
       } catch {}
       console.error("stock importStockExcel:", e);
-      return res.status(500).json({ success: false, message: "Server error" });
+      return res.status(500).json({
+        success: false,
+        message: e.message || "Server error",
+      });
     } finally {
       try {
         if (conn) conn.release();
