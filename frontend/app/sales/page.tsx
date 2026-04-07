@@ -114,12 +114,10 @@ export default function SalesRegisterPage() {
 
   const [viewOld, setViewOld] = useState<SaleRow | null>(null);
 
-  // Filters
   const [branches, setBranches] = useState<BranchRow[]>([]);
   const [branchId, setBranchId] = useState<number | "">("");
   const [cancelFilter, setCancelFilter] = useState<"" | "0" | "1">("");
 
-  // ✅ Date range filters (value returned is YYYY-MM-DD)
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
@@ -151,7 +149,6 @@ export default function SalesRegisterPage() {
     if (search) params.q = search;
     if (branchId !== "") params.branch_id = branchId;
     if (cancelFilter !== "") params.is_cancelled = cancelFilter;
-
     if (dateFrom) params.date_from = dateFrom;
     if (dateTo) params.date_to = dateTo;
 
@@ -190,7 +187,6 @@ export default function SalesRegisterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQ, permsLoading]);
 
-  // ✅ when filters change, reload
   useEffect(() => {
     if (permsLoading) return;
     setPage(1);
@@ -234,6 +230,7 @@ export default function SalesRegisterPage() {
       "2025-12-31",
       "Imported old sale",
     ];
+
     const csv = `${headers.join(",")}\n${sample
       .map((x) => `"${String(x).replace(/"/g, '""')}"`)
       .join(",")}\n`;
@@ -280,7 +277,6 @@ export default function SalesRegisterPage() {
     }
   };
 
-  // ✅ Export (Owner/Admin) + respects filters + date range
   const exportSales = async () => {
     try {
       const params = buildParams({});
@@ -311,7 +307,7 @@ export default function SalesRegisterPage() {
   return (
     <AuthGuard>
       <div className="p-6">
-        <div className="max-w-6xl mx-auto">
+        <div className="w-full mx-auto">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Sales Register</h1>
@@ -463,94 +459,181 @@ export default function SalesRegisterPage() {
 
             {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
 
-            <div className="mt-4 overflow-auto border border-slate-300 rounded-xl bg-white">
-              <table className="min-w-[1100px] w-full">
-                <thead className="bg-slate-50 text-sm text-slate-800">
-                  <tr>
-                    <th className="p-3 text-left">ID</th>
-                    <th className="p-3 text-left">Customer</th>
-                    <th className="p-3 text-left">Mobile</th>
-                    <th className="p-3 text-left">Branch</th>
-                    <th className="p-3 text-left">Vehicle</th>
-                    <th className="p-3 text-left">Chassis</th>
-                    <th className="p-3 text-left">Engine</th>
-                    <th className="p-3 text-left">Sale Date</th>
-                    <th className="p-3 text-right">Amount</th>
-                    <th className="p-3 text-right">View</th>
-                  </tr>
-                </thead>
-                <tbody className="text-sm text-slate-900">
-                  {loading && (
-                    <tr>
-                      <td className="p-4 text-slate-600" colSpan={10}>
-                        Loading...
-                      </td>
-                    </tr>
-                  )}
+       <div className="mt-4 border border-slate-300 rounded-xl bg-white overflow-hidden shadow-sm">
+  <div className="max-h-[72vh] overflow-auto">
+    <table className="w-full table-fixed border-separate border-spacing-0 text-[13px] leading-tight">
+      <colgroup>
+        <col className="w-[60px]" />
+        <col className="w-[14%]" />
+        <col className="w-[10%]" />
+        <col className="w-[11%]" />
+        <col className="w-[16%]" />
+        <col className="w-[14%]" />
+        <col className="w-[14%]" />
+        <col className="w-[9%]" />
+        <col className="w-[8%]" />
+        <col className="w-[8%]" />
+      </colgroup>
 
-                  {!loading && filtered.length === 0 && (
-                    <tr>
-                      <td className="p-4 text-slate-600" colSpan={10}>
-                        No sales found.
-                      </td>
-                    </tr>
-                  )}
+      <thead className="sticky top-0 z-30">
+        <tr className="bg-slate-100 text-slate-800 shadow-[inset_0_-1px_0_0_rgb(203_213_225)]">
+          <th className="sticky top-0 left-0 z-40 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-r border-slate-300">
+            ID
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-slate-300">
+            Customer
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-slate-300">
+            Mobile
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-slate-300">
+            Branch
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-slate-300">
+            Vehicle
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-slate-300">
+            Chassis
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-slate-300">
+            Engine
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-left font-semibold border-b border-slate-300">
+            Sale Date
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-right font-semibold border-b border-slate-300">
+            Amount
+          </th>
+          <th className="sticky top-0 z-30 bg-slate-100 px-3 py-2.5 text-right font-semibold border-b border-slate-300">
+            View
+          </th>
+        </tr>
+      </thead>
 
-                  {!loading &&
-                    filtered.map((s) => {
-                      const isOld = Boolean(s.is_old);
-                      const rowKey = isOld ? `old-${s.id}` : `sale-${s.id}`;
-                      return (
-                        <tr key={rowKey} className="border-t border-slate-200 hover:bg-slate-50">
-                          <td className="p-3 text-slate-600">{s.id}</td>
-                          <td className="p-3 font-medium text-slate-900">
-                            {s.customer_name || "-"}{" "}
-                            {isOld && (
-                              <span className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800">
-                                Imported
-                              </span>
-                            )}
-                            {Number(s.is_cancelled) === 1 && !isOld && (
-                              <span className="ml-2 text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-700">
-                                Cancelled
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 text-slate-900">{s.mobile_number || "-"}</td>
-                          <td className="p-3 text-slate-900">{s.branch_name || "-"}</td>
-                          <td className="p-3 text-slate-900">
-                            {[s.vehicle_make, s.vehicle_model].filter(Boolean).join(" ") || "-"}
-                          </td>
-                          <td className="p-3 font-mono text-slate-900">{s.chassis_number || "-"}</td>
-                          <td className="p-3 font-mono text-slate-900">{s.engine_number || "-"}</td>
-                          <td className="p-3 text-slate-900">{formatDateIN(s.sale_date)}</td>
-                          <td className="p-3 text-right font-semibold text-slate-900">
-                            {moneyINR(s.sale_price)}
-                          </td>
-                          <td className="p-3 text-right">
-                            {isOld ? (
-                              <button
-                                type="button"
-                                onClick={() => setViewOld(s)}
-                                className="inline-block px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-800 hover:bg-slate-50 text-sm"
-                              >
-                                View
-                              </button>
-                            ) : (
-                              <Link
-                                href={`/sales/${s.id}`}
-                                className="inline-block px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-800 hover:bg-slate-50 text-sm"
-                              >
-                                {canEdit ? "Edit / View" : "View"}
-                              </Link>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+      <tbody className="bg-white text-slate-900">
+        {loading && (
+          <tr>
+            <td
+              colSpan={10}
+              className="px-3 py-4 text-center text-sm text-slate-500"
+            >
+              Loading...
+            </td>
+          </tr>
+        )}
+
+        {!loading && filtered.length === 0 && (
+          <tr>
+            <td
+              colSpan={10}
+              className="px-3 py-4 text-center text-sm text-slate-500"
+            >
+              No sales found.
+            </td>
+          </tr>
+        )}
+
+        {!loading &&
+          filtered.map((s, idx) => {
+            const isOld = Boolean(s.is_old);
+            const rowKey = isOld ? `old-${s.id}` : `sale-${s.id}`;
+            const rowBg = idx % 2 === 0 ? "bg-white" : "bg-slate-50/50";
+
+            return (
+              <tr
+                key={rowKey}
+                className={`${rowBg} hover:bg-blue-50/60 transition-colors`}
+              >
+                <td className={`sticky left-0 z-20 ${rowBg} px-3 py-2.5 border-b border-r border-slate-200 text-slate-700 font-semibold align-top`}>
+                  {s.id}
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top">
+                  <div className="truncate font-medium" title={s.customer_name || "-"}>
+                    {s.customer_name || "-"}
+                  </div>
+
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {isOld && (
+                      <span className="inline-flex items-center rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                        Imported
+                      </span>
+                    )}
+
+                    {Number(s.is_cancelled) === 1 && !isOld && (
+                      <span className="inline-flex items-center rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
+                        Cancelled
+                      </span>
+                    )}
+                  </div>
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top">
+                  <div className="truncate" title={s.mobile_number || "-"}>
+                    {s.mobile_number || "-"}
+                  </div>
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top">
+                  <div className="truncate" title={s.branch_name || "-"}>
+                    {s.branch_name || "-"}
+                  </div>
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top">
+                  <div
+                    className="truncate"
+                    title={[s.vehicle_make, s.vehicle_model].filter(Boolean).join(" ") || "-"}
+                  >
+                    {[s.vehicle_make, s.vehicle_model].filter(Boolean).join(" ") || "-"}
+                  </div>
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top font-mono text-[12px]">
+                  <div className="truncate" title={s.chassis_number || "-"}>
+                    {s.chassis_number || "-"}
+                  </div>
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top font-mono text-[12px]">
+                  <div className="truncate" title={s.engine_number || "-"}>
+                    {s.engine_number || "-"}
+                  </div>
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top whitespace-nowrap">
+                  {formatDateIN(s.sale_date)}
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top text-right font-semibold whitespace-nowrap">
+                  {moneyINR(s.sale_price)}
+                </td>
+
+                <td className="px-3 py-2.5 border-b border-slate-200 align-top text-right whitespace-nowrap">
+                  {isOld ? (
+                    <button
+                      type="button"
+                      onClick={() => setViewOld(s)}
+                      className="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      View
+                    </button>
+                  ) : (
+                    <Link
+                      href={`/sales/${s.id}`}
+                      className="inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      {canEdit ? "Edit / View" : "View"}
+                    </Link>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+      </tbody>
+    </table>
+  </div>
+</div>
 
             <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
               <div className="text-sm text-slate-700">

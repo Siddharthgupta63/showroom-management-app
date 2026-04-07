@@ -1038,3 +1038,163 @@ exports.exportChallanItems = async (req, res) => {
     });
   }
 };
+
+exports.updateChallan = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const challanId = parseId(req.params.id);
+    if (!challanId) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "Invalid challan id" });
+    }
+
+    const challan = await getChallanById(conn, challanId, { forUpdate: true });
+    if (!challan) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: "Challan not found" });
+    }
+
+    if (String(challan.status || "").toLowerCase() !== "draft") {
+      await conn.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Only draft challan can be edited",
+      });
+    }
+
+    const challanDate = normalizeStr(req.body?.challan_date) || challan.challan_date;
+    const fromBranchId = parseId(req.body?.from_branch_id) || parseId(challan.from_branch_id);
+    const toBranchId = parseId(req.body?.to_branch_id) || parseId(challan.to_branch_id);
+
+    const transporterName = normalizeStr(req.body?.transporter_name) || null;
+    const vehicleNumber = normalizeStr(req.body?.vehicle_number) || null;
+    const driverName = normalizeStr(req.body?.driver_name) || null;
+    const driverMobile = normalizeStr(req.body?.driver_mobile) || null;
+    const lrNumber = normalizeStr(req.body?.lr_number) || null;
+    const notes = normalizeStr(req.body?.notes) || null;
+    const remarks = normalizeStr(req.body?.remarks) || null;
+
+    if (!challanDate) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "challan_date is required" });
+    }
+
+    if (!fromBranchId) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "from_branch_id is required" });
+    }
+
+    if (!toBranchId) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "to_branch_id is required" });
+    }
+
+    if (fromBranchId === toBranchId) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "From and To branch cannot be same" });
+    }
+
+    const fromBranch = await getBranchById(conn, fromBranchId);
+    const toBranch = await getBranchById(conn, toBranchId);
+
+    if (!fromBranch) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "Invalid from branch" });
+    }
+
+    if (!toBranch) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: "Invalid to branch" });
+    }
+
+    const [sumRows] = await conn.query(
+      `
+      SELECT
+        COUNT(*) AS total_vehicles,
+        COALESCE(SUM(line_amount), 0) AS subtotal_amount
+      FROM stock_transfer_challan_items
+      WHERE challan_id = ?
+      `,
+      [challanId]
+    );
+
+    const summary = sumRows?.[0] || {};
+
+    const totals = computeTotals({
+      subtotal_amount: summary.subtotal_amount || 0,
+      freight_amount: req.body?.freight_amount,
+      loading_amount: req.body?.loading_amount,
+      unloading_amount: req.body?.unloading_amount,
+      other_cost_amount: req.body?.other_cost_amount,
+      discount_amount: req.body?.discount_amount,
+      tax_amount: req.body?.tax_amount,
+    });
+
+    await conn.query(
+      `
+      UPDATE stock_transfer_challans
+      SET
+        challan_date = ?,
+        from_branch_id = ?,
+        to_branch_id = ?,
+        transporter_name = ?,
+        vehicle_number = ?,
+        driver_name = ?,
+        driver_mobile = ?,
+        lr_number = ?,
+        notes = ?,
+        remarks = ?,
+        subtotal_amount = ?,
+        freight_amount = ?,
+        loading_amount = ?,
+        unloading_amount = ?,
+        other_cost_amount = ?,
+        discount_amount = ?,
+        tax_amount = ?,
+        grand_total_amount = ?,
+        total_vehicles = ?
+      WHERE id = ?
+      `,
+      [
+        challanDate,
+        fromBranchId,
+        toBranchId,
+        transporterName,
+        vehicleNumber,
+        driverName,
+        driverMobile,
+        lrNumber,
+        notes,
+        remarks,
+        totals.subtotal_amount,
+        totals.freight_amount,
+        totals.loading_amount,
+        totals.unloading_amount,
+        totals.other_cost_amount,
+        totals.discount_amount,
+        totals.tax_amount,
+        totals.grand_total_amount,
+        Number(summary.total_vehicles || 0),
+        challanId,
+      ]
+    );
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: "Challan updated successfully",
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error("updateChallan error:", err);
+    return res.status(500).json({
+      success: false,
+      message: err?.message || "Server error",
+    });
+  } finally {
+    conn.release();
+  }
+};

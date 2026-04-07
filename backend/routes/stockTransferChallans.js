@@ -41,4 +41,10 @@ router.post(
   controller.cancelChallan
 );
 
+router.put(
+  "/:id",
+  requireRole(["owner", "admin", "manager"]),
+  controller.updateChallan
+);
+
 module.exports = router;

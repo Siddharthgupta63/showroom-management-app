@@ -176,11 +176,11 @@ export default function StockTransferChallanListPage() {
       if (status !== "all") params.status = status;
 
       const res = await api.get("/api/stock-transfer-challans/export-items", { params });
-      const rows = Array.isArray(res.data?.data) ? res.data.data : [];
+      const exportRows = Array.isArray(res.data?.data) ? res.data.data : [];
 
       downloadCsv(
         "stock_transfer_all_vehicle_rows.csv",
-        rows.map((r: any) => ({
+        exportRows.map((r: any) => ({
           challan_number: r.challan_number || "",
           challan_date: r.challan_date || "",
           status: r.status || "",
@@ -400,62 +400,76 @@ export default function StockTransferChallanListPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.id} className="border-t">
-                      <td className="p-3">
-                        <div className="font-semibold">{r.challan_number}</div>
-                        <div className="text-xs text-gray-500">#{r.id}</div>
-                      </td>
-                      <td className="p-3">{r.challan_date || "-"}</td>
-                      <td className="p-3">{r.from_branch_name || "-"}</td>
-                      <td className="p-3">{r.to_branch_name || "-"}</td>
-                      <td className="p-3">
-                        <div>{r.transporter_name || "-"}</div>
-                        <div className="text-xs text-gray-500">{r.vehicle_number || "-"}</div>
-                      </td>
-                      <td className="p-3">{r.total_vehicles || 0}</td>
-                      <td className="p-3">₹ {money(r.grand_total_amount || 0)}</td>
-                      <td className="p-3">{statusBadge(r.status)}</td>
-                      <td className="p-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Link
-                            href={`/stock/transfers/${r.id}`}
-                            className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
-                          >
-                            View
-                          </Link>
+                  {rows.map((r) => {
+                    const isDraft = String(r.status || "").toLowerCase() === "draft";
 
-                          <button
-                            type="button"
-                            onClick={() => window.open(`/stock/transfers/${r.id}`, "_blank")}
-                            className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
-                          >
-                            Print
-                          </button>
+                    return (
+                      <tr key={r.id} className="border-t">
+                        <td className="p-3">
+                          <div className="font-semibold">{r.challan_number}</div>
+                          <div className="text-xs text-gray-500">#{r.id}</div>
+                        </td>
+                        <td className="p-3">{r.challan_date || "-"}</td>
+                        <td className="p-3">{r.from_branch_name || "-"}</td>
+                        <td className="p-3">{r.to_branch_name || "-"}</td>
+                        <td className="p-3">
+                          <div>{r.transporter_name || "-"}</div>
+                          <div className="text-xs text-gray-500">{r.vehicle_number || "-"}</div>
+                        </td>
+                        <td className="p-3">{r.total_vehicles || 0}</td>
+                        <td className="p-3">₹ {money(r.grand_total_amount || 0)}</td>
+                        <td className="p-3">{statusBadge(r.status)}</td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap gap-2">
+                            <Link
+                              href={`/stock/transfers/${r.id}`}
+                              className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
+                            >
+                              View
+                            </Link>
 
-                          {String(r.status || "").toLowerCase() === "draft" && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => postChallan(r.id)}
-                                className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
+                            {isDraft && (
+                              <Link
+                                href={`/stock/transfers/${r.id}?mode=edit`}
+                                className="px-3 py-1.5 rounded border bg-blue-600 text-white hover:bg-blue-700"
                               >
-                                Post
-                              </button>
+                                Edit
+                              </Link>
+                            )}
 
-                              <button
-                                type="button"
-                                onClick={() => cancelChallan(r.id)}
-                                className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            <Link
+                              href={`/stock/transfers/${r.id}?print=1`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
+                            >
+                              Print
+                            </Link>
+
+                            {isDraft && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => postChallan(r.id)}
+                                  className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
+                                >
+                                  Post
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => cancelChallan(r.id)}
+                                  className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
