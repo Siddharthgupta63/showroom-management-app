@@ -66,12 +66,17 @@ function badgeClass(status: string) {
 function normalizeAgentOptions(payload: any): AgentOption[] {
   const grouped = payload?.data?.rc_agent;
   const raw =
-    Array.isArray(grouped) ? grouped :
-    Array.isArray(payload) ? payload :
-    Array.isArray(payload?.data) ? payload.data :
-    Array.isArray(payload?.rows) ? payload.rows :
-    Array.isArray(payload?.items) ? payload.items :
-    [];
+    Array.isArray(grouped)
+      ? grouped
+      : Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.rows)
+      ? payload.rows
+      : Array.isArray(payload?.items)
+      ? payload.items
+      : [];
 
   return raw
     .map((item: any) => {
@@ -154,10 +159,14 @@ export default function RCPage() {
       file_prepared: Number(r.file_prepared || 0),
       file_prepared_date: r.file_prepared_date ? String(r.file_prepared_date).slice(0, 10) : "",
       file_sent_to_agent: Number(r.file_sent_to_agent || 0),
-      file_sent_to_agent_date: r.file_sent_to_agent_date ? String(r.file_sent_to_agent_date).slice(0, 10) : "",
+      file_sent_to_agent_date: r.file_sent_to_agent_date
+        ? String(r.file_sent_to_agent_date).slice(0, 10)
+        : "",
       agent_name: r.agent_name || "",
       rc_received_from_agent: Number(r.rc_received_from_agent || 0),
-      rc_received_from_agent_date: r.rc_received_from_agent_date ? String(r.rc_received_from_agent_date).slice(0, 10) : "",
+      rc_received_from_agent_date: r.rc_received_from_agent_date
+        ? String(r.rc_received_from_agent_date).slice(0, 10)
+        : "",
       rc_card_delivered: Number(r.rc_card_delivered || 0),
       rc_delivered_date: r.rc_delivered_date ? String(r.rc_delivered_date).slice(0, 10) : "",
       notes: r.notes || "",
@@ -253,77 +262,112 @@ export default function RCPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md overflow-x-auto border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-100 text-gray-700">
-              <tr>
-                <th className="p-3 text-left">Sale ID</th>
-                <th className="p-3 text-left">Customer</th>
-                <th className="p-3 text-left">Vehicle</th>
-                <th className="p-3 text-center">File Prepared</th>
-                <th className="p-3 text-center">Sent To Agent</th>
-                <th className="p-3 text-center">RC Received</th>
-                <th className="p-3 text-center">Delivered</th>
-                <th className="p-3 text-left">RC No</th>
-                <th className="p-3 text-center">Status</th>
-                <th className="p-3 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
+        <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
+          <div className="max-h-[72vh] overflow-auto">
+            <table className="min-w-full text-sm border-separate border-spacing-0">
+              <thead className="sticky top-0 z-20 bg-gray-100 text-gray-700">
                 <tr>
-                  <td colSpan={10} className="p-4 text-center">
-                    Loading…
-                  </td>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    Sale ID
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    Customer
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    Vehicle
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    File Prepared
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Sent To Agent
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    RC Received
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Delivered
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    RC No
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Status
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Action
+                  </th>
                 </tr>
-              )}
+              </thead>
 
-              {!loading && filtered.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="p-4 text-center text-gray-500">
-                    No RC records found
-                  </td>
-                </tr>
-              )}
-
-              {!loading &&
-                filtered.map((r) => (
-                  <tr key={r.sale_id} className="border-t hover:bg-gray-50">
-                    <td className="p-3">{r.sale_id}</td>
-                    <td className="p-3 font-medium">{r.customer_name}</td>
-                    <td className="p-3">{r.vehicle_model}</td>
-                    <td className="p-3 text-center">
-                      {r.file_prepared ? fmtDate(r.file_prepared_date) : "NO"}
-                    </td>
-                    <td className="p-3 text-center">
-                      {r.file_sent_to_agent
-                        ? `${fmtDate(r.file_sent_to_agent_date)}${r.agent_name ? ` (${r.agent_name})` : ""}`
-                        : "NO"}
-                    </td>
-                    <td className="p-3 text-center">
-                      {r.rc_received_from_agent ? fmtDate(r.rc_received_from_agent_date) : "NO"}
-                    </td>
-                    <td className="p-3 text-center">
-                      {r.rc_card_delivered ? fmtDate(r.rc_delivered_date) : "NO"}
-                    </td>
-                    <td className="p-3">{r.rc_number || "-"}</td>
-                    <td className="p-3 text-center">
-                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(r.status)}`}>
-                        {r.status}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center">
-                      <button
-                        onClick={() => openEdit(r)}
-                        className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
-                      >
-                        Open
-                      </button>
+              <tbody>
+                {loading && (
+                  <tr>
+                    <td colSpan={10} className="p-4 text-center">
+                      Loading…
                     </td>
                   </tr>
-                ))}
-            </tbody>
-          </table>
+                )}
+
+                {!loading && filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="p-4 text-center text-gray-500">
+                      No RC records found
+                    </td>
+                  </tr>
+                )}
+
+                {!loading &&
+                  filtered.map((r, idx) => {
+                    const rowBg = idx % 2 === 0 ? "bg-white" : "bg-slate-50/40";
+
+                    return (
+                      <tr key={r.sale_id} className={`${rowBg} border-t hover:bg-gray-50`}>
+                        <td className="p-3 border-b border-slate-200">{r.sale_id}</td>
+                        <td className="p-3 border-b border-slate-200 font-medium">
+                          {r.customer_name}
+                        </td>
+                        <td className="p-3 border-b border-slate-200">{r.vehicle_model}</td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          {r.file_prepared ? fmtDate(r.file_prepared_date) : "NO"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          {r.file_sent_to_agent
+                            ? `${fmtDate(r.file_sent_to_agent_date)}${
+                                r.agent_name ? ` (${r.agent_name})` : ""
+                              }`
+                            : "NO"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          {r.rc_received_from_agent ? fmtDate(r.rc_received_from_agent_date) : "NO"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          {r.rc_card_delivered ? fmtDate(r.rc_delivered_date) : "NO"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200">{r.rc_number || "-"}</td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              r.status
+                            )}`}
+                          >
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          <button
+                            onClick={() => openEdit(r)}
+                            className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+                          >
+                            Open
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {form && (
@@ -416,7 +460,9 @@ export default function RCPage() {
                   <div className="text-sm mb-1">RC Received From Agent</div>
                   <select
                     value={form.rc_received_from_agent}
-                    onChange={(e) => setForm({ ...form, rc_received_from_agent: Number(e.target.value) })}
+                    onChange={(e) =>
+                      setForm({ ...form, rc_received_from_agent: Number(e.target.value) })
+                    }
                     className="w-full border rounded-lg px-3 py-2"
                   >
                     <option value={0}>No</option>
@@ -429,7 +475,9 @@ export default function RCPage() {
                   <input
                     type="date"
                     value={form.rc_received_from_agent_date}
-                    onChange={(e) => setForm({ ...form, rc_received_from_agent_date: e.target.value })}
+                    onChange={(e) =>
+                      setForm({ ...form, rc_received_from_agent_date: e.target.value })
+                    }
                     className="w-full border rounded-lg px-3 py-2"
                   />
                 </label>
@@ -487,4 +535,4 @@ export default function RCPage() {
       </div>
     </AuthGuard>
   );
-} 
+}

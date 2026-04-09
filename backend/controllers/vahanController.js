@@ -339,7 +339,11 @@ exports.listVahan = async (req, res) => {
         vs.rto_number,
         COALESCE(vs.penalty_due, 0) AS penalty_due,
         vs.penalty_amount,
-        vs.remarks
+
+-- ✅ ADD THIS (Penalty Start Date logic)
+DATE_ADD(s.sale_date, INTERVAL 7 DAY) AS penalty_start_date,
+
+vs.remarks
       ${baseFrom}
       ORDER BY s.sale_date DESC, s.id DESC
       LIMIT ? OFFSET ?

@@ -317,58 +317,64 @@ function VahanPageInner() {
         )}
 
         {!loading && rows.length > 0 && (
-          <div className="overflow-auto bg-white rounded shadow">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-200 text-left">
-                <tr>
-                  <th className="p-2">Sale ID</th>
-                  <th className="p-2">Sale Date</th>
-                  <th className="p-2">Customer</th>
-                  <th className="p-2">Mobile</th>
-                  <th className="p-2">Vehicle</th>
-                  <th className="p-2">Application No</th>
-                  <th className="p-2">Fill Date</th>
-                  <th className="p-2">Payment</th>
-                  <th className="p-2">Payment Date</th>
-                  <th className="p-2">RTO Number</th>
-                  <th className="p-2">Penalty</th>
-                  <th className="p-2">Status</th>
-                  <th className="p-2">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.sale_id} className="border-t">
-                    <td className="p-2">{r.sale_id}</td>
-                    <td className="p-2 whitespace-nowrap">{formatDate(r.sale_date)}</td>
-                    <td className="p-2">{r.customer_name || "-"}</td>
-                    <td className="p-2">{r.mobile_number || "-"}</td>
-                    <td className="p-2">
-                      {[r.vehicle_make, r.vehicle_model].filter(Boolean).join(" ") || "-"}
-                    </td>
-                    <td className="p-2">{r.application_number || "-"}</td>
-                    <td className="p-2 whitespace-nowrap">{formatDate(r.vahan_fill_date)}</td>
-                    <td className="p-2">{Number(r.payment_done) ? "Paid" : "Unpaid"}</td>
-                    <td className="p-2 whitespace-nowrap">{formatDate(r.vahan_payment_date)}</td>
-                    <td className="p-2">{r.rto_number || "-"}</td>
-                    <td className="p-2">
-                      {Number(r.penalty_due)
-                        ? `Yes${r.penalty_amount ? ` (${r.penalty_amount})` : ""}`
-                        : "No"}
-                    </td>
-                    <td className="p-2">{formatStatus(r.current_status)}</td>
-                    <td className="p-2">
-                      <Link
-                        href={`/vahan/${r.sale_id}`}
-                        className="px-3 py-1 bg-blue-600 text-white rounded inline-block"
-                      >
-                        Open
-                      </Link>
-                    </td>
+          <div className="bg-white rounded shadow overflow-hidden">
+            <div className="max-h-[72vh] overflow-auto">
+              <table className="w-full text-sm border-separate border-spacing-0">
+                <thead className="sticky top-0 z-20 bg-gray-200 text-left">
+                  <tr>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Sale ID</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Sale Date</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Customer</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Mobile</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Vehicle</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Application No</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Fill Date</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Payment</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Payment Date</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">RTO Number</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Penalty</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Penalty Start Date</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Status</th>
+                    <th className="sticky top-0 z-20 bg-gray-200 p-2 border-b">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.sale_id} className="border-t">
+                      <td className="p-2 border-b">{r.sale_id}</td>
+                      <td className="p-2 border-b whitespace-nowrap">{formatDate(r.sale_date)}</td>
+                      <td className="p-2 border-b">{r.customer_name || "-"}</td>
+                      <td className="p-2 border-b">{r.mobile_number || "-"}</td>
+                      <td className="p-2 border-b">
+                        {[r.vehicle_make, r.vehicle_model].filter(Boolean).join(" ") || "-"}
+                      </td>
+                      <td className="p-2 border-b">{r.application_number || "-"}</td>
+                      <td className="p-2 border-b whitespace-nowrap">{formatDate(r.vahan_fill_date)}</td>
+                      <td className="p-2 border-b">{Number(r.payment_done) ? "Paid" : "Unpaid"}</td>
+                      <td className="p-2 border-b whitespace-nowrap">{formatDate(r.vahan_payment_date)}</td>
+                      <td className="p-2 border-b">{r.rto_number || "-"}</td>
+                      <td className="p-2 border-b">
+                        {Number(r.penalty_due)
+                          ? `Yes${r.penalty_amount ? ` (${r.penalty_amount})` : ""}`
+                          : "No"}
+                      </td>
+                      <td className="p-2 border-b whitespace-nowrap">
+                        {formatDate(r.penalty_start_date)}
+                      </td>
+                      <td className="p-2 border-b">{formatStatus(r.current_status)}</td>
+                      <td className="p-2 border-b">
+                        <Link
+                          href={`/vahan/${r.sale_id}`}
+                          className="px-3 py-1 bg-blue-600 text-white rounded inline-block"
+                        >
+                          Open
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
             <div className="flex items-center justify-between p-4 border-t">
               <div className="text-sm text-gray-600">

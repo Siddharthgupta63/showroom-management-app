@@ -344,77 +344,114 @@ export default function HSRPPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md overflow-x-auto border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-100 text-gray-700">
-              <tr>
-                <th className="p-3 text-left">Sale ID</th>
-                <th className="p-3 text-left">Customer</th>
-                <th className="p-3 text-left">Vehicle</th>
-                <th className="p-3 text-left">HSRP No</th>
-                <th className="p-3 text-center">Order Date</th>
-                <th className="p-3 text-center">Plate Received</th>
-                <th className="p-3 text-center">Fitment</th>
-                <th className="p-3 text-left">Fitment By</th>
-                <th className="p-3 text-center">Status</th>
-                <th className="p-3 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
+        <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
+          <div className="max-h-[72vh] overflow-auto">
+            <table className="min-w-full text-sm border-separate border-spacing-0">
+              <thead className="sticky top-0 z-20 bg-gray-100 text-gray-700">
                 <tr>
-                  <td colSpan={10} className="p-4 text-center">
-                    Loading…
-                  </td>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    Sale ID
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    Customer
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    Vehicle
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    HSRP No
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Order Date
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Plate Received
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Fitment
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-left border-b border-slate-300">
+                    Fitment By
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Status
+                  </th>
+                  <th className="sticky top-0 z-20 bg-gray-100 p-3 text-center border-b border-slate-300">
+                    Action
+                  </th>
                 </tr>
-              )}
+              </thead>
 
-              {!loading && filtered.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="p-4 text-center text-gray-500">
-                    No HSRP records found
-                  </td>
-                </tr>
-              )}
-
-              {!loading &&
-                filtered.map((r) => (
-                  <tr key={r.sale_id} className="border-t hover:bg-gray-50">
-                    <td className="p-3">{r.sale_id}</td>
-                    <td className="p-3 font-medium">{r.customer_name}</td>
-                    <td className="p-3">{r.vehicle_model}</td>
-                    <td className="p-3">{r.hsrp_number || r.rto_number || "-"}</td>
-                    <td className="p-3 text-center">{fmtDate(r.hsrp_issued_date)}</td>
-                    <td className="p-3 text-center">
-                      {r.plate_received
-                        ? `YES${r.plate_received_date ? ` (${fmtDate(r.plate_received_date)})` : ""}`
-                        : "NO"}
-                    </td>
-                    <td className="p-3 text-center">
-                      {r.hsrp_installed
-                        ? `DONE${r.fitment_date ? ` (${fmtDate(r.fitment_date)})` : ""}`
-                        : "PENDING"}
-                    </td>
-                    <td className="p-3">{r.fitment_by_name || "-"}</td>
-                    <td className="p-3 text-center">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(r.status)}`}
-                      >
-                        {r.status}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center">
-                      <button
-                        onClick={() => openEdit(r)}
-                        className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
-                      >
-                        Open
-                      </button>
+              <tbody>
+                {loading && (
+                  <tr>
+                    <td colSpan={10} className="p-4 text-center">
+                      Loading…
                     </td>
                   </tr>
-                ))}
-            </tbody>
-          </table>
+                )}
+
+                {!loading && filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="p-4 text-center text-gray-500">
+                      No HSRP records found
+                    </td>
+                  </tr>
+                )}
+
+                {!loading &&
+                  filtered.map((r, idx) => {
+                    const rowBg = idx % 2 === 0 ? "bg-white" : "bg-slate-50/40";
+
+                    return (
+                      <tr key={r.sale_id} className={`${rowBg} border-t hover:bg-gray-50`}>
+                        <td className="p-3 border-b border-slate-200">{r.sale_id}</td>
+                        <td className="p-3 border-b border-slate-200 font-medium">
+                          {r.customer_name}
+                        </td>
+                        <td className="p-3 border-b border-slate-200">{r.vehicle_model}</td>
+                        <td className="p-3 border-b border-slate-200">
+                          {r.hsrp_number || r.rto_number || "-"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          {fmtDate(r.hsrp_issued_date)}
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          {r.plate_received
+                            ? `YES${r.plate_received_date ? ` (${fmtDate(r.plate_received_date)})` : ""}`
+                            : "NO"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          {r.hsrp_installed
+                            ? `DONE${r.fitment_date ? ` (${fmtDate(r.fitment_date)})` : ""}`
+                            : "PENDING"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200">
+                          {r.fitment_by_name || "-"}
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${badgeClass(
+                              r.status
+                            )}`}
+                          >
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="p-3 border-b border-slate-200 text-center">
+                          <button
+                            onClick={() => openEdit(r)}
+                            className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700"
+                          >
+                            Open
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {form && (
