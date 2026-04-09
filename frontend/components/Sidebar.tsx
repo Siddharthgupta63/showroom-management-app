@@ -67,6 +67,21 @@ export default function Sidebar() {
     canDropdowns ||
     canDashboardPermissions;
 
+  // Reports access
+  const canReports =
+    isOwnerAdminManager ||
+    hasPermission("view_reports") ||
+    hasPermission("export_reports");
+
+  const isReportsSectionActive =
+    isActive("/reports") ||
+    isActive("/reports/sales") ||
+    isActive("/reports/stock");
+
+  const reportsParentClass = `block px-3 py-2 rounded hover:bg-red-500 ${
+    isReportsSectionActive ? "bg-red-500" : ""
+  }`;
+
   const isAdminUsersSectionActive =
     isActive("/admin/users") ||
     isActive("/admin/active-users") ||
@@ -113,22 +128,22 @@ export default function Sidebar() {
           </Link>
         )}
 
-      {canStock && (
-  <div>
-    <Link href="/stock" className={linkClass("/stock")}>
-      Stock
-    </Link>
+        {canStock && (
+          <div>
+            <Link href="/stock" className={linkClass("/stock")}>
+              Stock
+            </Link>
 
-    <div className="ml-4 mt-1 space-y-1">
-      <Link
-        href="/stock/transfers"
-        className={childLinkClass("/stock/transfers")}
-      >
-        Stock Transfers
-      </Link>
-    </div>
-  </div>
-)}
+            <div className="ml-4 mt-1 space-y-1">
+              <Link
+                href="/stock/transfers"
+                className={childLinkClass("/stock/transfers")}
+              >
+                Stock Transfers
+              </Link>
+            </div>
+          </div>
+        )}
 
         {canInsurance && (
           <Link href="/insurance" className={linkClass("/insurance")}>
@@ -164,6 +179,44 @@ export default function Sidebar() {
         <Link href="/hsrp" className={linkClass("/hsrp")}>
           HSRP
         </Link>
+
+        {canReports && (
+          <div className="pt-2">
+            <Link href="/reports" className={reportsParentClass}>
+              Reports
+            </Link>
+
+            <div className="ml-4 mt-1 space-y-1">
+              <Link
+                href="/reports/sales"
+                className={childLinkClass("/reports/sales")}
+              >
+                Sales Report
+              </Link>
+
+              <Link
+                href="/reports/stock"
+                className={childLinkClass("/reports/stock")}
+              >
+                Stock Report
+              </Link>
+<Link
+  href="/reports/odrc"
+  className={childLinkClass("/reports/odrc")}
+>
+  ODRC Report
+</Link>
+
+<Link
+  href="/reports/stock-ageing"
+  className={childLinkClass("/reports/stock-ageing")}
+>
+  Stock Ageing
+</Link>
+
+            </div>
+          </div>
+        )}
 
         {canAdminSection && (
           <div className="pt-2">

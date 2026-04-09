@@ -1,144 +1,1466 @@
 const db = require("../db");
+const ExcelJS = require("exceljs");
 
-/**
- * DASHBOARD METRICS WITH ROLE-BASED VISIBILITY
- */
-exports.getDashboardMetrics = async (req, res) => {
+// --------------------------------------------------
+// Helpers
+// --------------------------------------------------
+function normalizeDate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  return s || null;
+}
+
+function normalizeString(value) {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  return s || null;
+}
+
+function applyLike(value) {
+  return `%${value}%`;
+}
+
+// --------------------------------------------------
+// SALES REPORT
+// --------------------------------------------------
+exports.getSalesReport = async (req, res) => {
   try {
-    const role = String(req.user?.role || "").toLowerCase();
+    const fromDate = normalizeDate(req.query.fromDate);
+    const toDate = normalizeDate(req.query.toDate);
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
 
-    const [permissions] = await db.query(
-      `
-      SELECT metric_key
-      FROM dashboard_permissions
-      WHERE role = ? AND is_visible = 1
-      `,
-      [role]
-    );
+    let where = ` WHERE 1 = 1 `;
+    const params = [];
 
-    let allowedMetrics = permissions.map((p) => p.metric_key);
-
-    if ((role === "owner" || role === "admin") && allowedMetrics.length === 0) {
-      allowedMetrics = [
-        "total_sales",
-        "pending_insurance",
-        "pending_rc",
-        "pending_hsrp",
-        "pending_vahan_fill",
-        "pending_vahan_payment",
-        "renewals_due",
-      ];
+    if (fromDate) {
+      where += ` AND DATE(s.sale_date) >= ? `;
+      params.push(fromDate);
     }
 
-    if (allowedMetrics.length === 0) {
-      return res.json({});
+    if (toDate) {
+      where += ` AND DATE(s.sale_date) <= ? `;
+      params.push(toDate);
     }
 
-    const [
-      [totalSales],
-      [pendingInsurance],
-      [pendingRC],
-      [pendingHSRP],
-      [pendingVahanFill],
-      [pendingVahanPayment],
-      [renewalsDue],
-    ] = await Promise.all([
-      db.query(`SELECT COUNT(*) AS count FROM sales WHERE is_cancelled = 0`),
-
-      db.query(`
-        SELECT COUNT(*) AS count
-        FROM sales s
-        LEFT JOIN insurance i ON s.id = i.sale_id
-        WHERE s.is_cancelled = 0
-          AND i.id IS NULL
-      `),
-
-      db.query(`
-        SELECT COUNT(*) AS count
-        FROM sales s
-        LEFT JOIN rc r ON s.id = r.sale_id
-        WHERE s.is_cancelled = 0
-          AND s.rc_required = 1
-          AND r.id IS NULL
-      `),
-
-      db.query(`
-        SELECT COUNT(*) AS count
-        FROM hsrp
-        WHERE hsrp_required = 1
-          AND (hsrp_number IS NULL OR hsrp_number = '')
-      `),
-
-      db.query(`
-        SELECT COUNT(*) AS count
-        FROM sales s
-        LEFT JOIN vahan v ON v.sale_id = s.id
-        LEFT JOIN vahan_submission vs ON vs.sale_id = s.id
-        WHERE s.is_cancelled = 0
-          AND COALESCE(v.insurance_done, 0) = 1
-          AND (vs.application_number IS NULL OR vs.application_number = '')
-      `),
-
-      db.query(`
-        SELECT COUNT(*) AS count
-        FROM sales s
-        LEFT JOIN vahan_submission vs ON vs.sale_id = s.id
-        WHERE s.is_cancelled = 0
-          AND vs.application_number IS NOT NULL
-          AND vs.application_number <> ''
-          AND COALESCE(vs.payment_done, 0) = 0
-      `),
-
-      db.query(`
-        SELECT COUNT(*) AS count
-        FROM renewals
-        WHERE renewal_date IS NULL
-      `),
-    ]);
-
-    const metricMap = {
-      total_sales: Number(totalSales?.[0]?.count || 0),
-      pending_insurance: Number(pendingInsurance?.[0]?.count || 0),
-      pending_rc: Number(pendingRC?.[0]?.count || 0),
-      pending_hsrp: Number(pendingHSRP?.[0]?.count || 0),
-      pending_vahan_fill: Number(pendingVahanFill?.[0]?.count || 0),
-      pending_vahan_payment: Number(pendingVahanPayment?.[0]?.count || 0),
-      renewals_due: Number(renewalsDue?.[0]?.count || 0),
-    };
-
-    const response = {};
-    for (const key of allowedMetrics) {
-      response[key] = metricMap[key] ?? 0;
+    if (branchId) {
+      where += ` AND s.branch_id = ? `;
+      params.push(branchId);
     }
 
-    return res.json(response);
+    if (search) {
+      where += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR s.vehicle_model LIKE ?
+        OR s.chassis_number LIKE ?
+        OR s.engine_number LIKE ?
+        OR s.invoice_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      params.push(q, q, q, q, q, q);
+    }
+
+    const rowsSql = `
+      SELECT
+        s.id,
+        s.sale_date,
+        s.invoice_number,
+        s.customer_name,
+        s.mobile_number,
+        s.vehicle_model,
+        s.chassis_number,
+        s.engine_number,
+        s.branch_id,
+        sb.branch_name AS branch_name,
+        s.sale_price
+      FROM sales s
+      LEFT JOIN showroom_branches sb ON sb.id = s.branch_id
+      ${where}
+      ORDER BY s.sale_date DESC, s.id DESC
+    `;
+
+    const [rows] = await db.query(rowsSql, params);
+
+    const summarySql = `
+      SELECT
+        COUNT(*) AS total_sales,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount,
+        COALESCE(SUM(s.sale_price), 0) AS total_ex_showroom,
+        0 AS total_insurance,
+        0 AS total_accessories
+      FROM sales s
+      ${where}
+    `;
+
+    const [summaryRows] = await db.query(summarySql, params);
+
+    return res.json({
+      success: true,
+      rows,
+      summary: summaryRows[0] || {
+        total_sales: 0,
+        total_amount: 0,
+        total_ex_showroom: 0,
+        total_insurance: 0,
+        total_accessories: 0,
+      },
+    });
   } catch (error) {
-    console.error("Dashboard error:", error);
-    return res.status(500).json({ message: "Dashboard failed" });
+    console.error("getSalesReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch sales report",
+      error: error.message,
+    });
   }
 };
 
-const reportsService = require('../services/reportsService');
+function formatDateOnly(date) {
+  const d = new Date(date);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
-exports.getSalesSummary = async (req, res) => {
-  const data = await reportsService.getSalesSummary();
-  res.json(data);
+function getTodayDateString() {
+  return formatDateOnly(new Date());
+}
+
+function getMonthStart(dateString) {
+  const d = new Date(dateString);
+  d.setDate(1);
+  return formatDateOnly(d);
+}
+
+function getFinancialYearStart(dateString) {
+  const d = new Date(dateString);
+  const year = d.getMonth() + 1 >= 4 ? d.getFullYear() : d.getFullYear() - 1;
+  return `${year}-04-01`;
+}
+
+function getFinancialYearMonthLabels(dateString) {
+  const fyStart = new Date(getFinancialYearStart(dateString));
+  const end = new Date(dateString);
+  const labels = [];
+
+  const cur = new Date(fyStart);
+  while (cur <= end) {
+    labels.push({
+      key: `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}`,
+      label: cur.toLocaleString("en-IN", { month: "short" }),
+      year: cur.getFullYear(),
+      month: cur.getMonth() + 1,
+    });
+    cur.setMonth(cur.getMonth() + 1);
+  }
+
+  return labels;
+}
+
+exports.getSalesAnalytics = async (req, res) => {
+  try {
+    const fromDate = normalizeDate(req.query.fromDate);
+    const toDate = normalizeDate(req.query.toDate) || getTodayDateString();
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
+
+    const reportToDate = toDate;
+    const mtdFromDate = getMonthStart(reportToDate);
+    const ytdFromDate = getFinancialYearStart(reportToDate);
+    const defaultAnalysisFromDate = fromDate || ytdFromDate;
+    const defaultAnalysisToDate = reportToDate;
+
+    let baseWhere = ` WHERE 1 = 1 `;
+    const baseParams = [];
+
+    if (fromDate) {
+      baseWhere += ` AND DATE(s.sale_date) >= ? `;
+      baseParams.push(fromDate);
+    }
+
+    if (toDate) {
+      baseWhere += ` AND DATE(s.sale_date) <= ? `;
+      baseParams.push(toDate);
+    }
+
+    if (branchId) {
+      baseWhere += ` AND s.branch_id = ? `;
+      baseParams.push(branchId);
+    }
+
+    if (search) {
+      baseWhere += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR s.vehicle_model LIKE ?
+        OR s.chassis_number LIKE ?
+        OR s.engine_number LIKE ?
+        OR s.invoice_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      baseParams.push(q, q, q, q, q, q);
+    }
+
+    const rowsSql = `
+      SELECT
+        s.id,
+        s.sale_date,
+        s.invoice_number,
+        s.customer_name,
+        s.mobile_number,
+        s.vehicle_model,
+        s.chassis_number,
+        s.engine_number,
+        COALESCE(sb.branch_name, '') AS branch_name,
+        COALESCE(s.sale_price, 0) AS sale_price
+      FROM sales s
+      LEFT JOIN showroom_branches sb ON sb.id = s.branch_id
+      ${baseWhere}
+      ORDER BY s.sale_date DESC, s.id DESC
+    `;
+
+    const [rows] = await db.query(rowsSql, baseParams);
+
+    const summarySql = `
+      SELECT
+        COUNT(*) AS total_sales,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount,
+        COALESCE(SUM(s.sale_price), 0) AS total_ex_showroom,
+        0 AS total_insurance,
+        0 AS total_accessories
+      FROM sales s
+      ${baseWhere}
+    `;
+
+    const [summaryRows] = await db.query(summarySql, baseParams);
+
+    // MTD
+    let mtdWhere = ` WHERE DATE(s.sale_date) >= ? AND DATE(s.sale_date) <= ? `;
+    const mtdParams = [mtdFromDate, reportToDate];
+
+    if (branchId) {
+      mtdWhere += ` AND s.branch_id = ? `;
+      mtdParams.push(branchId);
+    }
+
+    if (search) {
+      mtdWhere += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR s.vehicle_model LIKE ?
+        OR s.chassis_number LIKE ?
+        OR s.engine_number LIKE ?
+        OR s.invoice_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      mtdParams.push(q, q, q, q, q, q);
+    }
+
+    const [mtdRows] = await db.query(
+      `
+      SELECT
+        COUNT(*) AS total_sales,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount
+      FROM sales s
+      ${mtdWhere}
+      `,
+      mtdParams
+    );
+
+    // YTD
+    let ytdWhere = ` WHERE DATE(s.sale_date) >= ? AND DATE(s.sale_date) <= ? `;
+    const ytdParams = [ytdFromDate, reportToDate];
+
+    if (branchId) {
+      ytdWhere += ` AND s.branch_id = ? `;
+      ytdParams.push(branchId);
+    }
+
+    if (search) {
+      ytdWhere += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR s.vehicle_model LIKE ?
+        OR s.chassis_number LIKE ?
+        OR s.engine_number LIKE ?
+        OR s.invoice_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      ytdParams.push(q, q, q, q, q, q);
+    }
+
+    const [ytdRows] = await db.query(
+      `
+      SELECT
+        COUNT(*) AS total_sales,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount
+      FROM sales s
+      ${ytdWhere}
+      `,
+      ytdParams
+    );
+
+    // Model-wise
+    let modelWhere = ` WHERE DATE(s.sale_date) >= ? AND DATE(s.sale_date) <= ? `;
+    const modelParams = [defaultAnalysisFromDate, defaultAnalysisToDate];
+
+    if (branchId) {
+      modelWhere += ` AND s.branch_id = ? `;
+      modelParams.push(branchId);
+    }
+
+    if (search) {
+      modelWhere += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR s.vehicle_model LIKE ?
+        OR s.chassis_number LIKE ?
+        OR s.engine_number LIKE ?
+        OR s.invoice_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      modelParams.push(q, q, q, q, q, q);
+    }
+
+    const [modelWiseRows] = await db.query(
+      `
+      SELECT
+        COALESCE(s.vehicle_model, 'Unknown') AS vehicle_model,
+        COUNT(*) AS retail_count,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount,
+        COALESCE(AVG(NULLIF(s.sale_price, 0)), 0) AS avg_amount
+      FROM sales s
+      ${modelWhere}
+      GROUP BY COALESCE(s.vehicle_model, 'Unknown')
+      ORDER BY retail_count DESC, total_amount DESC
+      `,
+      modelParams
+    );
+
+    // Branch-wise
+    const [branchWiseRows] = await db.query(
+      `
+      SELECT
+        COALESCE(sb.branch_name, 'Unknown') AS branch_name,
+        COUNT(*) AS retail_count,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount
+      FROM sales s
+      LEFT JOIN showroom_branches sb ON sb.id = s.branch_id
+      ${modelWhere}
+      GROUP BY COALESCE(sb.branch_name, 'Unknown')
+      ORDER BY retail_count DESC, total_amount DESC
+      `,
+      modelParams
+    );
+
+    // Date-wise (day number wise)
+    const [dateWiseRaw] = await db.query(
+      `
+      SELECT
+        DAY(s.sale_date) AS day_no,
+        COUNT(*) AS retail_count,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount
+      FROM sales s
+      ${modelWhere}
+      GROUP BY DAY(s.sale_date)
+      ORDER BY DAY(s.sale_date)
+      `,
+      modelParams
+    );
+
+    const dateWiseRows = [];
+    const startDay = new Date(defaultAnalysisFromDate);
+    const endDay = new Date(defaultAnalysisToDate);
+
+    const sameMonth =
+      startDay.getFullYear() === endDay.getFullYear() &&
+      startDay.getMonth() === endDay.getMonth();
+
+    if (sameMonth) {
+      const lastDay = endDay.getDate();
+      for (let d = 1; d <= lastDay; d++) {
+        const found = dateWiseRaw.find((x) => Number(x.day_no) === d);
+        dateWiseRows.push({
+          day_no: d,
+          retail_count: found ? Number(found.retail_count) : 0,
+          total_amount: found ? Number(found.total_amount) : 0,
+        });
+      }
+    } else {
+      dateWiseRaw.forEach((r) =>
+        dateWiseRows.push({
+          day_no: Number(r.day_no),
+          retail_count: Number(r.retail_count),
+          total_amount: Number(r.total_amount),
+        })
+      );
+    }
+
+    // Month-wise FY
+    let monthWhere = ` WHERE DATE(s.sale_date) >= ? AND DATE(s.sale_date) <= ? `;
+    const monthParams = [ytdFromDate, reportToDate];
+
+    if (branchId) {
+      monthWhere += ` AND s.branch_id = ? `;
+      monthParams.push(branchId);
+    }
+
+    if (search) {
+      monthWhere += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR s.vehicle_model LIKE ?
+        OR s.chassis_number LIKE ?
+        OR s.engine_number LIKE ?
+        OR s.invoice_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      monthParams.push(q, q, q, q, q, q);
+    }
+
+    const [monthWiseRaw] = await db.query(
+      `
+      SELECT
+        YEAR(s.sale_date) AS year_no,
+        MONTH(s.sale_date) AS month_no,
+        COUNT(*) AS retail_count,
+        COALESCE(SUM(s.sale_price), 0) AS total_amount
+      FROM sales s
+      ${monthWhere}
+      GROUP BY YEAR(s.sale_date), MONTH(s.sale_date)
+      ORDER BY YEAR(s.sale_date), MONTH(s.sale_date)
+      `,
+      monthParams
+    );
+
+    const fyLabels = getFinancialYearMonthLabels(reportToDate);
+
+    const monthWiseRows = fyLabels.map((m) => {
+      const found = monthWiseRaw.find(
+        (x) => Number(x.year_no) === m.year && Number(x.month_no) === m.month
+      );
+      return {
+        month_key: m.key,
+        month_label: m.label,
+        retail_count: found ? Number(found.retail_count) : 0,
+        total_amount: found ? Number(found.total_amount) : 0,
+      };
+    });
+
+    return res.json({
+      success: true,
+      filters: {
+        fromDate,
+        toDate,
+        branchId,
+        search,
+        mtdFromDate,
+        ytdFromDate,
+        analysisFromDate: defaultAnalysisFromDate,
+        analysisToDate: defaultAnalysisToDate,
+      },
+      summary: summaryRows[0] || {
+        total_sales: 0,
+        total_amount: 0,
+        total_ex_showroom: 0,
+        total_insurance: 0,
+        total_accessories: 0,
+      },
+      mtd: mtdRows[0] || {
+        total_sales: 0,
+        total_amount: 0,
+      },
+      ytd: ytdRows[0] || {
+        total_sales: 0,
+        total_amount: 0,
+      },
+      rows,
+      modelWise: modelWiseRows || [],
+      branchWise: branchWiseRows || [],
+      dateWise: dateWiseRows || [],
+      monthWise: monthWiseRows || [],
+    });
+  } catch (error) {
+    console.error("getSalesAnalytics error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch sales analytics",
+      error: error.message,
+    });
+  }
 };
 
-exports.getDailyReport = async (req, res) => {
-  const data = await reportsService.getTodayReport();
-  res.json(data);
+exports.exportSalesReport = async (req, res) => {
+  try {
+    const fromDate = normalizeDate(req.query.fromDate);
+    const toDate = normalizeDate(req.query.toDate);
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
+
+    let where = ` WHERE 1 = 1 `;
+    const params = [];
+
+    if (fromDate) {
+      where += ` AND DATE(s.sale_date) >= ? `;
+      params.push(fromDate);
+    }
+
+    if (toDate) {
+      where += ` AND DATE(s.sale_date) <= ? `;
+      params.push(toDate);
+    }
+
+    if (branchId) {
+      where += ` AND s.branch_id = ? `;
+      params.push(branchId);
+    }
+
+    if (search) {
+      where += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR s.vehicle_model LIKE ?
+        OR s.chassis_number LIKE ?
+        OR s.engine_number LIKE ?
+        OR s.invoice_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      params.push(q, q, q, q, q, q);
+    }
+
+    const sql = `
+      SELECT
+        s.id AS "ID",
+        DATE_FORMAT(s.sale_date, '%Y-%m-%d') AS "Sale Date",
+        s.invoice_number AS "Invoice No",
+        s.customer_name AS "Customer",
+        s.mobile_number AS "Mobile",
+        COALESCE(sb.branch_name, '') AS "Branch",
+        s.vehicle_model AS "Vehicle",
+        s.chassis_number AS "Chassis",
+        s.engine_number AS "Engine",
+        COALESCE(s.sale_price, 0) AS "Total Amount"
+      FROM sales s
+      LEFT JOIN showroom_branches sb ON sb.id = s.branch_id
+      ${where}
+      ORDER BY s.sale_date DESC, s.id DESC
+    `;
+
+    const [rows] = await db.query(sql, params);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Sales Report");
+
+    worksheet.columns = [
+      { header: "ID", key: "ID", width: 10 },
+      { header: "Sale Date", key: "Sale Date", width: 14 },
+      { header: "Invoice No", key: "Invoice No", width: 18 },
+      { header: "Customer", key: "Customer", width: 28 },
+      { header: "Mobile", key: "Mobile", width: 16 },
+      { header: "Branch", key: "Branch", width: 18 },
+      { header: "Vehicle", key: "Vehicle", width: 22 },
+      { header: "Chassis", key: "Chassis", width: 24 },
+      { header: "Engine", key: "Engine", width: 24 },
+      { header: "Total Amount", key: "Total Amount", width: 14 },
+    ];
+
+    rows.forEach((row) => worksheet.addRow(row));
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="sales-report.xlsx"'
+    );
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (error) {
+    console.error("exportSalesReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to export sales report",
+      error: error.message,
+    });
+  }
 };
 
-exports.getMonthlyReport = async (req, res) => {
-  const data = await reportsService.getMonthlyTrend();
-  res.json(data);
+// --------------------------------------------------
+// STOCK REPORT
+// --------------------------------------------------
+exports.getStockReport = async (req, res) => {
+  try {
+    const fromDate = normalizeDate(req.query.fromDate);
+    const toDate = normalizeDate(req.query.toDate);
+    const branchId = normalizeString(req.query.branchId);
+    const status = normalizeString(req.query.status);
+    const search = normalizeString(req.query.search);
+
+    let where = ` WHERE 1 = 1 `;
+    const params = [];
+
+    if (fromDate) {
+      where += ` AND DATE(vpi.created_at) >= ? `;
+      params.push(fromDate);
+    }
+
+    if (toDate) {
+      where += ` AND DATE(vpi.created_at) <= ? `;
+      params.push(toDate);
+    }
+
+    if (branchId) {
+      where += ` AND vpi.current_branch_id = ? `;
+      params.push(branchId);
+    }
+
+    if (status) {
+      where += ` AND vpi.status_code = ? `;
+      params.push(status);
+    }
+
+    if (search) {
+      where += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR vpi.chassis_number LIKE ?
+        OR vpi.engine_number LIKE ?
+        OR vm.model_name LIKE ?
+        OR vv.variant_name LIKE ?
+      ) `;
+      const q = applyLike(search);
+      params.push(q, q, q, q, q, q);
+    }
+
+    const rowsSql = `
+      SELECT
+        vpi.id,
+        vpi.created_at,
+        COALESCE(sb.branch_name, '') AS branch_name,
+        CONCAT_WS(' / ', vm.model_name, vv.variant_name, vpi.color) AS vehicle_name,
+        vpi.chassis_number,
+        vpi.engine_number,
+        vpi.status_code,
+        COALESCE(s.customer_name, '') AS customer_name,
+        COALESCE(s.mobile_number, '') AS mobile_number,
+        DATEDIFF(CURDATE(), DATE(vpi.created_at)) AS ageing_days
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN showroom_branches sb ON sb.id = vpi.current_branch_id
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${where}
+      ORDER BY vpi.id DESC
+    `;
+
+    const [rows] = await db.query(rowsSql, params);
+
+    const summarySql = `
+      SELECT
+        COUNT(*) AS total_stock,
+        SUM(CASE WHEN vpi.status_code = 'in_stock' THEN 1 ELSE 0 END) AS in_stock_count,
+        SUM(CASE WHEN vpi.status_code = 'sold' THEN 1 ELSE 0 END) AS sold_count,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), DATE(vpi.created_at)) BETWEEN 0 AND 30 THEN 1 ELSE 0 END) AS ageing_0_30,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), DATE(vpi.created_at)) BETWEEN 31 AND 60 THEN 1 ELSE 0 END) AS ageing_31_60,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), DATE(vpi.created_at)) BETWEEN 61 AND 90 THEN 1 ELSE 0 END) AS ageing_61_90,
+        SUM(CASE WHEN DATEDIFF(CURDATE(), DATE(vpi.created_at)) > 90 THEN 1 ELSE 0 END) AS ageing_90_plus
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      ${where}
+    `;
+
+    const [summaryRows] = await db.query(summarySql, params);
+
+    return res.json({
+      success: true,
+      rows,
+      summary: summaryRows[0] || {
+        total_stock: 0,
+        in_stock_count: 0,
+        sold_count: 0,
+        ageing_0_30: 0,
+        ageing_31_60: 0,
+        ageing_61_90: 0,
+        ageing_90_plus: 0,
+      },
+    });
+  } catch (error) {
+    console.error("getStockReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch stock report",
+      error: error.message,
+    });
+  }
 };
 
-exports.getIncentiveReport = async (req, res) => {
-  const data = await reportsService.getIncentiveReport(
-    req.query.startDate,
-    req.query.endDate
-  );
-  res.json(data);
+function safeDateString(value) {
+  if (!value) return null;
+  return String(value).trim().slice(0, 10);
+}
+
+function previousDate(dateString) {
+  const d = new Date(dateString);
+  d.setDate(d.getDate() - 1);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+exports.getStockOdrcReport = async (req, res) => {
+  try {
+    const reportDate = safeDateString(req.query.reportDate) || safeDateString(new Date());
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
+
+    const prevDate = previousDate(reportDate);
+
+    let commonWhere = ` WHERE 1 = 1 `;
+    const commonParams = [];
+
+    if (branchId) {
+      commonWhere += ` AND vpi.current_branch_id = ? `;
+      commonParams.push(branchId);
+    }
+
+    if (search) {
+      commonWhere += ` AND (
+        vpi.chassis_number LIKE ?
+        OR vpi.engine_number LIKE ?
+        OR vm.model_name LIKE ?
+        OR vv.variant_name LIKE ?
+        OR s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      commonParams.push(q, q, q, q, q, q);
+    }
+
+    // Overall ODRC
+    const overallSql = `
+      SELECT
+        (
+          SELECT COUNT(*)
+          FROM vehicle_purchase_items vpi
+          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+          LEFT JOIN sales s ON s.id = vpi.sale_id
+          ${commonWhere}
+          AND DATE(vpi.created_at) <= ?
+        ) AS opening_stock,
+
+        (
+          SELECT COUNT(*)
+          FROM vehicle_purchase_items vpi
+          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+          LEFT JOIN sales s ON s.id = vpi.sale_id
+          ${commonWhere}
+          AND DATE(vpi.created_at) = ?
+        ) AS dispatch_count,
+
+        (
+          SELECT COUNT(*)
+          FROM sales s
+          LEFT JOIN vehicle_purchase_items vpi ON vpi.sale_id = s.id
+          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+          WHERE DATE(s.sale_date) = ?
+          ${branchId ? " AND vpi.current_branch_id = ? " : ""}
+          ${search ? `
+            AND (
+              vpi.chassis_number LIKE ?
+              OR vpi.engine_number LIKE ?
+              OR vm.model_name LIKE ?
+              OR vv.variant_name LIKE ?
+              OR s.customer_name LIKE ?
+              OR s.mobile_number LIKE ?
+            )
+          ` : ""}
+        ) AS retail_count,
+
+        (
+          SELECT COUNT(*)
+          FROM vehicle_purchase_items vpi
+          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+          LEFT JOIN sales s ON s.id = vpi.sale_id
+          ${commonWhere}
+          AND DATE(vpi.created_at) <= ?
+        )
+        +
+        (
+          SELECT COUNT(*)
+          FROM vehicle_purchase_items vpi
+          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+          LEFT JOIN sales s ON s.id = vpi.sale_id
+          ${commonWhere}
+          AND DATE(vpi.created_at) = ?
+        )
+        -
+        (
+          SELECT COUNT(*)
+          FROM sales s
+          LEFT JOIN vehicle_purchase_items vpi ON vpi.sale_id = s.id
+          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+          WHERE DATE(s.sale_date) = ?
+          ${branchId ? " AND vpi.current_branch_id = ? " : ""}
+          ${search ? `
+            AND (
+              vpi.chassis_number LIKE ?
+              OR vpi.engine_number LIKE ?
+              OR vm.model_name LIKE ?
+              OR vv.variant_name LIKE ?
+              OR s.customer_name LIKE ?
+              OR s.mobile_number LIKE ?
+            )
+          ` : ""}
+        ) AS closing_stock
+    `;
+
+    const overallParams = [
+      ...commonParams, prevDate,
+      ...commonParams, reportDate,
+      reportDate,
+      ...(branchId ? [branchId] : []),
+      ...(search ? (() => {
+        const q = applyLike(search);
+        return [q, q, q, q, q, q];
+      })() : []),
+      ...commonParams, prevDate,
+      ...commonParams, reportDate,
+      reportDate,
+      ...(branchId ? [branchId] : []),
+      ...(search ? (() => {
+        const q = applyLike(search);
+        return [q, q, q, q, q, q];
+      })() : []),
+    ];
+
+    const [overallRows] = await db.query(overallSql, overallParams);
+
+    // Branch-wise
+    let branchWhere = ` WHERE 1 = 1 `;
+    const branchParams = [];
+
+    if (branchId) {
+      branchWhere += ` AND sb.id = ? `;
+      branchParams.push(branchId);
+    }
+
+    const [branchRows] = await db.query(
+      `
+      SELECT
+        sb.id AS branch_id,
+        sb.branch_name,
+        SUM(CASE WHEN DATE(vpi.created_at) <= ? THEN 1 ELSE 0 END) AS opening_stock,
+        SUM(CASE WHEN DATE(vpi.created_at) = ? THEN 1 ELSE 0 END) AS dispatch_count,
+        SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END) AS retail_count,
+        (
+          SUM(CASE WHEN DATE(vpi.created_at) <= ? THEN 1 ELSE 0 END)
+          + SUM(CASE WHEN DATE(vpi.created_at) = ? THEN 1 ELSE 0 END)
+          - SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END)
+        ) AS closing_stock
+      FROM showroom_branches sb
+      LEFT JOIN vehicle_purchase_items vpi ON vpi.current_branch_id = sb.id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${branchWhere}
+      GROUP BY sb.id, sb.branch_name
+      ORDER BY sb.branch_name
+      `,
+      [prevDate, reportDate, reportDate, prevDate, reportDate, reportDate, ...branchParams]
+    );
+
+    // Model-wise
+    let modelWhere = ` WHERE 1 = 1 `;
+    const modelParams = [];
+
+    if (branchId) {
+      modelWhere += ` AND vpi.current_branch_id = ? `;
+      modelParams.push(branchId);
+    }
+
+    if (search) {
+      modelWhere += ` AND (
+        vpi.chassis_number LIKE ?
+        OR vpi.engine_number LIKE ?
+        OR vm.model_name LIKE ?
+        OR vv.variant_name LIKE ?
+        OR s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      modelParams.push(q, q, q, q, q, q);
+    }
+
+    const [modelRows] = await db.query(
+      `
+      SELECT
+        CONCAT_WS(' / ', vm.model_name, vv.variant_name) AS model_label,
+        SUM(CASE WHEN DATE(vpi.created_at) <= ? THEN 1 ELSE 0 END) AS opening_stock,
+        SUM(CASE WHEN DATE(vpi.created_at) = ? THEN 1 ELSE 0 END) AS dispatch_count,
+        SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END) AS retail_count,
+        (
+          SUM(CASE WHEN DATE(vpi.created_at) <= ? THEN 1 ELSE 0 END)
+          + SUM(CASE WHEN DATE(vpi.created_at) = ? THEN 1 ELSE 0 END)
+          - SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END)
+        ) AS closing_stock
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${modelWhere}
+      GROUP BY vm.model_name, vv.variant_name
+      HAVING model_label IS NOT NULL
+      ORDER BY closing_stock DESC, model_label
+      `,
+      [prevDate, reportDate, reportDate, prevDate, reportDate, reportDate, ...modelParams]
+    );
+
+    return res.json({
+      success: true,
+      filters: {
+        reportDate,
+        branchId,
+        search,
+      },
+      summary: overallRows[0] || {
+        opening_stock: 0,
+        dispatch_count: 0,
+        retail_count: 0,
+        closing_stock: 0,
+      },
+      branchWise: branchRows || [],
+      modelWise: modelRows || [],
+    });
+  } catch (error) {
+    console.error("getStockOdrcReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch ODRC report",
+      error: error.message,
+    });
+  }
+};
+
+exports.getStockAgeingReport = async (req, res) => {
+  try {
+    const asOnDate = safeDateString(req.query.asOnDate) || safeDateString(new Date());
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
+    const status = normalizeString(req.query.status) || "in_stock";
+
+    let where = `
+      WHERE 1 = 1
+      AND vpi.inward_date IS NOT NULL
+    `;
+    const params = [];
+
+    if (status) {
+      where += ` AND vpi.status_code = ? `;
+      params.push(status);
+    }
+
+    if (branchId) {
+      where += ` AND vpi.current_branch_id = ? `;
+      params.push(branchId);
+    }
+
+    if (search) {
+      where += ` AND (
+        vpi.chassis_number LIKE ?
+        OR vpi.engine_number LIKE ?
+        OR vm.model_name LIKE ?
+        OR vv.variant_name LIKE ?
+        OR vpi.color LIKE ?
+        OR s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      params.push(q, q, q, q, q, q, q);
+    }
+
+    const rowsSql = `
+      SELECT
+        vpi.id,
+        vpi.inward_date,
+        COALESCE(sb.branch_name, '') AS branch_name,
+        CONCAT_WS(' / ', vm.model_name, vv.variant_name, vpi.color) AS vehicle_name,
+        vpi.chassis_number,
+        vpi.engine_number,
+        vpi.status_code,
+        COALESCE(s.customer_name, '') AS customer_name,
+        COALESCE(s.mobile_number, '') AS mobile_number,
+        DATEDIFF(?, DATE(vpi.inward_date)) AS ageing_days,
+        CASE
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 0 AND 7 THEN '0-7 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 8 AND 15 THEN '8-15 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 16 AND 30 THEN '16-30 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 31 AND 60 THEN '31-60 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 61 AND 90 THEN '61-90 Days'
+          ELSE '90+ Days'
+        END AS ageing_bucket
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN showroom_branches sb ON sb.id = vpi.current_branch_id
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${where}
+      ORDER BY DATEDIFF(?, DATE(vpi.inward_date)) DESC, vpi.id DESC
+    `;
+
+    const [rows] = await db.query(rowsSql, [
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      ...params,
+      asOnDate,
+    ]);
+
+    const summarySql = `
+      SELECT
+        COUNT(*) AS total_units,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 0 AND 7 THEN 1 ELSE 0 END) AS bucket_0_7,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 8 AND 15 THEN 1 ELSE 0 END) AS bucket_8_15,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 16 AND 30 THEN 1 ELSE 0 END) AS bucket_16_30,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 31 AND 60 THEN 1 ELSE 0 END) AS bucket_31_60,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 61 AND 90 THEN 1 ELSE 0 END) AS bucket_61_90,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) > 90 THEN 1 ELSE 0 END) AS bucket_90_plus
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${where}
+    `;
+
+    const [summaryRows] = await db.query(summarySql, [
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      ...params,
+    ]);
+
+    const branchSql = `
+      SELECT
+        COALESCE(sb.branch_name, 'Unknown') AS branch_name,
+        COUNT(*) AS total_units,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 0 AND 7 THEN 1 ELSE 0 END) AS bucket_0_7,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 8 AND 15 THEN 1 ELSE 0 END) AS bucket_8_15,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 16 AND 30 THEN 1 ELSE 0 END) AS bucket_16_30,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 31 AND 60 THEN 1 ELSE 0 END) AS bucket_31_60,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 61 AND 90 THEN 1 ELSE 0 END) AS bucket_61_90,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) > 90 THEN 1 ELSE 0 END) AS bucket_90_plus
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN showroom_branches sb ON sb.id = vpi.current_branch_id
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${where}
+      GROUP BY COALESCE(sb.branch_name, 'Unknown')
+      ORDER BY total_units DESC, branch_name
+    `;
+
+    const [branchRows] = await db.query(branchSql, [
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      ...params,
+    ]);
+
+    const modelSql = `
+      SELECT
+        CONCAT_WS(' / ', vm.model_name, vv.variant_name) AS model_label,
+        COUNT(*) AS total_units,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 0 AND 7 THEN 1 ELSE 0 END) AS bucket_0_7,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 8 AND 15 THEN 1 ELSE 0 END) AS bucket_8_15,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 16 AND 30 THEN 1 ELSE 0 END) AS bucket_16_30,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 31 AND 60 THEN 1 ELSE 0 END) AS bucket_31_60,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 61 AND 90 THEN 1 ELSE 0 END) AS bucket_61_90,
+        SUM(CASE WHEN DATEDIFF(?, DATE(vpi.inward_date)) > 90 THEN 1 ELSE 0 END) AS bucket_90_plus
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${where}
+      GROUP BY vm.model_name, vv.variant_name
+      HAVING model_label IS NOT NULL
+      ORDER BY total_units DESC, model_label
+    `;
+
+    const [modelRows] = await db.query(modelSql, [
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      ...params,
+    ]);
+
+    return res.json({
+      success: true,
+      filters: {
+        asOnDate,
+        branchId,
+        search,
+        status,
+      },
+      summary: summaryRows[0] || {
+        total_units: 0,
+        bucket_0_7: 0,
+        bucket_8_15: 0,
+        bucket_16_30: 0,
+        bucket_31_60: 0,
+        bucket_61_90: 0,
+        bucket_90_plus: 0,
+      },
+      branchWise: branchRows || [],
+      modelWise: modelRows || [],
+      rows: rows || [],
+    });
+  } catch (error) {
+    console.error("getStockAgeingReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch stock ageing report",
+      error: error.message,
+    });
+  }
+};
+
+exports.exportStockAgeingReport = async (req, res) => {
+  try {
+    const asOnDate = safeDateString(req.query.asOnDate) || safeDateString(new Date());
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
+    const status = normalizeString(req.query.status) || "in_stock";
+
+    let where = `
+      WHERE 1 = 1
+      AND vpi.inward_date IS NOT NULL
+    `;
+    const params = [];
+
+    if (status) {
+      where += ` AND vpi.status_code = ? `;
+      params.push(status);
+    }
+
+    if (branchId) {
+      where += ` AND vpi.current_branch_id = ? `;
+      params.push(branchId);
+    }
+
+    if (search) {
+      where += ` AND (
+        vpi.chassis_number LIKE ?
+        OR vpi.engine_number LIKE ?
+        OR vm.model_name LIKE ?
+        OR vv.variant_name LIKE ?
+        OR vpi.color LIKE ?
+        OR s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      params.push(q, q, q, q, q, q, q);
+    }
+
+    const sql = `
+      SELECT
+        vpi.id AS "ID",
+        DATE_FORMAT(vpi.inward_date, '%Y-%m-%d') AS "Inward Date",
+        COALESCE(sb.branch_name, '') AS "Branch",
+        CONCAT_WS(' / ', vm.model_name, vv.variant_name, vpi.color) AS "Vehicle",
+        COALESCE(vpi.chassis_number, '') AS "Chassis",
+        COALESCE(vpi.engine_number, '') AS "Engine",
+        COALESCE(vpi.status_code, '') AS "Status",
+        COALESCE(s.customer_name, '') AS "Customer",
+        COALESCE(s.mobile_number, '') AS "Mobile",
+        COALESCE(DATEDIFF(?, DATE(vpi.inward_date)), 0) AS "Ageing Days",
+        CASE
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 0 AND 7 THEN '0-7 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 8 AND 15 THEN '8-15 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 16 AND 30 THEN '16-30 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 31 AND 60 THEN '31-60 Days'
+          WHEN DATEDIFF(?, DATE(vpi.inward_date)) BETWEEN 61 AND 90 THEN '61-90 Days'
+          ELSE '90+ Days'
+        END AS "Ageing Bucket"
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN showroom_branches sb ON sb.id = vpi.current_branch_id
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${where}
+      ORDER BY DATEDIFF(?, DATE(vpi.inward_date)) DESC, vpi.id DESC
+    `;
+
+    const [rows] = await db.query(sql, [
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      asOnDate,
+      ...params,
+      asOnDate,
+    ]);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Stock Ageing Report");
+
+    worksheet.columns = [
+      { header: "ID", key: "ID", width: 10 },
+      { header: "Inward Date", key: "Inward Date", width: 14 },
+      { header: "Branch", key: "Branch", width: 18 },
+      { header: "Vehicle", key: "Vehicle", width: 30 },
+      { header: "Chassis", key: "Chassis", width: 24 },
+      { header: "Engine", key: "Engine", width: 24 },
+      { header: "Status", key: "Status", width: 14 },
+      { header: "Customer", key: "Customer", width: 24 },
+      { header: "Mobile", key: "Mobile", width: 16 },
+      { header: "Ageing Days", key: "Ageing Days", width: 12 },
+      { header: "Ageing Bucket", key: "Ageing Bucket", width: 14 },
+    ];
+
+    rows.forEach((row) => worksheet.addRow(row));
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="stock-ageing-report-${asOnDate}.xlsx"`
+    );
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (error) {
+    console.error("exportStockAgeingReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to export stock ageing report",
+      error: error.message,
+    });
+  }
+};
+
+exports.exportStockOdrcReport = async (req, res) => {
+  try {
+    const reportDate = safeDateString(req.query.reportDate) || safeDateString(new Date());
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
+    const prevDate = previousDate(reportDate);
+
+    let modelWhere = ` WHERE 1 = 1 `;
+    const modelParams = [];
+
+    if (branchId) {
+      modelWhere += ` AND vpi.current_branch_id = ? `;
+      modelParams.push(branchId);
+    }
+
+    if (search) {
+      modelWhere += ` AND (
+        vpi.chassis_number LIKE ?
+        OR vpi.engine_number LIKE ?
+        OR vm.model_name LIKE ?
+        OR vv.variant_name LIKE ?
+        OR s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+      ) `;
+      const q = applyLike(search);
+      modelParams.push(q, q, q, q, q, q);
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        CONCAT_WS(' / ', vm.model_name, vv.variant_name) AS "Model",
+        SUM(CASE WHEN DATE(vpi.created_at) <= ? THEN 1 ELSE 0 END) AS "Opening Stock",
+        SUM(CASE WHEN DATE(vpi.created_at) = ? THEN 1 ELSE 0 END) AS "Dispatch",
+        SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END) AS "Retail",
+        (
+          SUM(CASE WHEN DATE(vpi.created_at) <= ? THEN 1 ELSE 0 END)
+          + SUM(CASE WHEN DATE(vpi.created_at) = ? THEN 1 ELSE 0 END)
+          - SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END)
+        ) AS "Closing Stock"
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${modelWhere}
+      GROUP BY vm.model_name, vv.variant_name
+      HAVING Model IS NOT NULL
+      ORDER BY "Closing Stock" DESC, "Model"
+      `,
+      [prevDate, reportDate, reportDate, prevDate, reportDate, reportDate, ...modelParams]
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("ODRC Report");
+
+    worksheet.columns = [
+      { header: "Model", key: "Model", width: 32 },
+      { header: "Opening Stock", key: "Opening Stock", width: 16 },
+      { header: "Dispatch", key: "Dispatch", width: 12 },
+      { header: "Retail", key: "Retail", width: 12 },
+      { header: "Closing Stock", key: "Closing Stock", width: 16 },
+    ];
+
+    rows.forEach((row) => worksheet.addRow(row));
+
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="odrc-report-${reportDate}.xlsx"`
+    );
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (error) {
+    console.error("exportStockOdrcReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to export ODRC report",
+      error: error.message,
+    });
+  }
+};
+
+exports.exportStockReport = async (req, res) => {
+  try {
+    const fromDate = normalizeDate(req.query.fromDate);
+    const toDate = normalizeDate(req.query.toDate);
+    const branchId = normalizeString(req.query.branchId);
+    const status = normalizeString(req.query.status);
+    const search = normalizeString(req.query.search);
+
+    let where = ` WHERE 1 = 1 `;
+    const params = [];
+
+    if (fromDate) {
+      where += ` AND DATE(vpi.created_at) >= ? `;
+      params.push(fromDate);
+    }
+
+    if (toDate) {
+      where += ` AND DATE(vpi.created_at) <= ? `;
+      params.push(toDate);
+    }
+
+    if (branchId) {
+      where += ` AND vpi.current_branch_id = ? `;
+      params.push(branchId);
+    }
+
+    if (status) {
+      where += ` AND vpi.status_code = ? `;
+      params.push(status);
+    }
+
+    if (search) {
+      where += ` AND (
+        s.customer_name LIKE ?
+        OR s.mobile_number LIKE ?
+        OR vpi.chassis_number LIKE ?
+        OR vpi.engine_number LIKE ?
+        OR vm.model_name LIKE ?
+        OR vv.variant_name LIKE ?
+      ) `;
+      const q = applyLike(search);
+      params.push(q, q, q, q, q, q);
+    }
+
+    const sql = `
+      SELECT
+        vpi.id AS "ID",
+        DATE_FORMAT(vpi.created_at, '%Y-%m-%d') AS "Purchase Date",
+        COALESCE(sb.branch_name, '') AS "Branch",
+        CONCAT_WS(' / ', vm.model_name, vv.variant_name, vpi.color) AS "Vehicle",
+        COALESCE(vpi.chassis_number, '') AS "Chassis",
+        COALESCE(vpi.engine_number, '') AS "Engine",
+        COALESCE(vpi.status_code, '') AS "Status",
+        COALESCE(s.customer_name, '') AS "Customer",
+        COALESCE(s.mobile_number, '') AS "Mobile",
+        COALESCE(DATEDIFF(CURDATE(), DATE(vpi.created_at)), 0) AS "Ageing Days"
+      FROM vehicle_purchase_items vpi
+      LEFT JOIN showroom_branches sb ON sb.id = vpi.current_branch_id
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+      LEFT JOIN sales s ON s.id = vpi.sale_id
+      ${where}
+      ORDER BY vpi.id DESC
+    `;
+
+    const [rows] = await db.query(sql, params);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Stock Report");
+
+    worksheet.columns = [
+      { header: "ID", key: "ID", width: 10 },
+      { header: "Purchase Date", key: "Purchase Date", width: 14 },
+      { header: "Branch", key: "Branch", width: 18 },
+      { header: "Vehicle", key: "Vehicle", width: 28 },
+      { header: "Chassis", key: "Chassis", width: 24 },
+      { header: "Engine", key: "Engine", width: 24 },
+      { header: "Status", key: "Status", width: 14 },
+      { header: "Customer", key: "Customer", width: 26 },
+      { header: "Mobile", key: "Mobile", width: 16 },
+      { header: "Ageing Days", key: "Ageing Days", width: 12 },
+    ];
+
+    rows.forEach((row) => worksheet.addRow(row));
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="stock-report.xlsx"'
+    );
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (error) {
+    console.error("exportStockReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to export stock report",
+      error: error.message,
+    });
+  }
 };

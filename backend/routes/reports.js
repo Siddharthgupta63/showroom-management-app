@@ -1,59 +1,70 @@
-// backend/routes/reports.js
-
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
-const reportsController = require('../controllers/reportsController');
-const { authMiddleware } = require('../middleware/authMiddleware');
+const reportsController = require("../controllers/reportsController");
+const { authMiddleware } = require("../middleware/authMiddleware");
 
-/**
- * DASHBOARD REPORT
- * GET /api/reports/dashboard
- */
+// If you already use requirePermission middleware, uncomment below
+// const { requirePermission } = require("../middleware/permissionMiddleware");
+
+// ---------- SALES REPORT ----------
 router.get(
-  '/dashboard',
+  "/sales",
   authMiddleware,
-  reportsController.getDashboardMetrics
+  // requirePermission("view_reports"),
+  reportsController.getSalesReport
 );
 
-/**
- * SALES SUMMARY
- * GET /api/reports/sales-summary
- */
 router.get(
-  '/sales-summary',
+  "/sales/analytics",
   authMiddleware,
-  reportsController.getSalesSummary
+  reportsController.getSalesAnalytics
 );
 
-/**
- * DAILY REPORT
- * GET /api/reports/daily
- */
 router.get(
-  '/daily',
+  "/sales/export",
   authMiddleware,
-  reportsController.getDailyReport
+  // requirePermission("export_reports"),
+  reportsController.exportSalesReport
 );
 
-/**
- * MONTHLY REPORT
- * GET /api/reports/monthly
- */
 router.get(
-  '/monthly',
+  "/stock/odrc",
   authMiddleware,
-  reportsController.getMonthlyReport
+  reportsController.getStockOdrcReport
 );
 
-/**
- * INCENTIVE REPORT
- * GET /api/reports/incentive
- */
 router.get(
-  '/incentive',
+  "/stock/odrc/export",
   authMiddleware,
-  reportsController.getIncentiveReport
+  reportsController.exportStockOdrcReport
+);
+
+router.get(
+  "/stock/ageing",
+  authMiddleware,
+  reportsController.getStockAgeingReport
+);
+
+router.get(
+  "/stock/ageing/export",
+  authMiddleware,
+  reportsController.exportStockAgeingReport
+);
+
+// ---------- STOCK REPORT ----------
+router.get(
+  "/stock",
+  authMiddleware,
+  // requirePermission("view_reports"),
+  reportsController.getStockReport
+);
+
+router.get(
+  "/stock/export",
+  authMiddleware,
+  // requirePermission("export_reports"),
+  reportsController.exportStockReport
 );
 
 module.exports = router;

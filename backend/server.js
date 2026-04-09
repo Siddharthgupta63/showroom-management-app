@@ -12,7 +12,7 @@ const vehicleStockRoutes = require("./routes/vehicleStock");
 const stockTransfersRoutes = require("./routes/stockTransfers");
 const stockTransferChallansRoutes = require("./routes/stockTransferChallans");
 // const stockRoutes = require("./routes/stock"); // ❌ do not mount duplicate /api/stock router
-
+const reportsRoutes = require("./routes/reports");
 dotenv.config(); // load env first
 
 // ✅ WhatsApp cron (exports: { start, runOnce })
@@ -83,6 +83,7 @@ app.use("/api/pipeline", require("./routes/pipeline"));
 
 // ✅ WhatsApp Logs APIs
 app.use("/api/whatsapp", require("./routes/whatsappLogs"));
+app.use("/api/reports", reportsRoutes);
 
 // ✅ Dropdown master APIs
 try {
