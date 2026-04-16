@@ -6,6 +6,7 @@ const path = require("path");
 
 const branchesRoutes = require("./routes/branches");
 const { ensureViews } = require("./utils/ensureViews");
+const dashboardRoutes = require("./routes/dashboard");
 const hsrpRoutes = require("./routes/hsrp");
 const rcRoutes = require("./routes/rc");
 const vehicleStockRoutes = require("./routes/vehicleStock");
@@ -55,7 +56,7 @@ app.use("/api/vehicles", require("./routes/vehicles"));
 
 // ✅ single stock router only
 app.use("/api/stock", vehicleStockRoutes);
-
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/vahan", require("./routes/vahan"));
 app.use("/api/hsrp", hsrpRoutes);
 app.use("/api/rc", rcRoutes);

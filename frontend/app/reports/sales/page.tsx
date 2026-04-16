@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ReportFilters from "@/components/reports/ReportFilters";
 import ExportButton from "@/components/reports/ExportButton";
 
-const API_BASE = "http://localhost:5000";
+import { API_BASE } from "@/lib/apiBase";
 
 type SalesRow = {
   id: number;

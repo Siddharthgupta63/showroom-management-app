@@ -5,7 +5,7 @@ import ReportFilters from "@/components/reports/ReportFilters";
 import ReportSummaryCards from "@/components/reports/ReportSummaryCards";
 import ExportButton from "@/components/reports/ExportButton";
 
-const API_BASE = "http://localhost:5000";
+import { API_BASE } from "@/lib/apiBase";
 
 type StockRow = {
   id: number;

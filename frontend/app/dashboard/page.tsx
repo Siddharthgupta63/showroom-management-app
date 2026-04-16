@@ -125,8 +125,8 @@ export default function DashboardPage() {
     if (!token) return;
 
     api
-      .get("/api/reports/dashboard")
-      .then((res) => setData(res.data || {}))
+  .get("/api/dashboard")
+  .then((res) => setData(res.data?.data || {}))
       .catch((err) => {
         console.error("Dashboard metrics fetch failed:", err);
         setData({});
