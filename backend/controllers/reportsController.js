@@ -74,6 +74,14 @@ function previousDate(dateString) {
   return formatDateOnly(d);
 }
 
+function successResponse(payload) {
+  return {
+    success: true,
+    ...payload,
+    data: payload, // compatibility for old/new frontend
+  };
+}
+
 // use inward_date when available, otherwise fallback to created_at
 const STOCK_DATE_EXPR = `COALESCE(vpi.inward_date, vpi.created_at)`;
 
@@ -152,17 +160,20 @@ exports.getSalesReport = async (req, res) => {
 
     const [summaryRows] = await db.query(summarySql, params);
 
-    return res.json({
-      success: true,
-      rows,
-      summary: summaryRows[0] || {
-        total_sales: 0,
-        total_amount: 0,
-        total_ex_showroom: 0,
-        total_insurance: 0,
-        total_accessories: 0,
-      },
-    });
+    const summary = summaryRows[0] || {
+      total_sales: 0,
+      total_amount: 0,
+      total_ex_showroom: 0,
+      total_insurance: 0,
+      total_accessories: 0,
+    };
+
+    return res.json(
+      successResponse({
+        rows,
+        summary,
+      })
+    );
   } catch (error) {
     console.error("getSalesReport error:", error);
     return res.status(500).json({
@@ -457,8 +468,7 @@ exports.getSalesAnalytics = async (req, res) => {
       };
     });
 
-    return res.json({
-      success: true,
+    const payload = {
       filters: {
         fromDate,
         toDate,
@@ -489,7 +499,9 @@ exports.getSalesAnalytics = async (req, res) => {
       branchWise: branchWiseRows || [],
       dateWise: dateWiseRows || [],
       monthWise: monthWiseRows || [],
-    });
+    };
+
+    return res.json(successResponse(payload));
   } catch (error) {
     console.error("getSalesAnalytics error:", error);
     return res.status(500).json({
@@ -687,8 +699,7 @@ exports.getStockReport = async (req, res) => {
 
     const [summaryRows] = await db.query(summarySql, params);
 
-    return res.json({
-      success: true,
+    const payload = {
       rows,
       summary: summaryRows[0] || {
         total_stock: 0,
@@ -699,7 +710,9 @@ exports.getStockReport = async (req, res) => {
         ageing_61_90: 0,
         ageing_90_plus: 0,
       },
-    });
+    };
+
+    return res.json(successResponse(payload));
   } catch (error) {
     console.error("getStockReport error:", error);
     return res.status(500).json({
@@ -1021,8 +1034,7 @@ exports.getStockOdrcReport = async (req, res) => {
       [prevDate, reportDate, reportDate, prevDate, reportDate, reportDate, ...modelParams]
     );
 
-    return res.json({
-      success: true,
+    const payload = {
       filters: {
         reportDate,
         branchId,
@@ -1036,7 +1048,9 @@ exports.getStockOdrcReport = async (req, res) => {
       },
       branchWise: branchRows || [],
       modelWise: modelRows || [],
-    });
+    };
+
+    return res.json(successResponse(payload));
   } catch (error) {
     console.error("getStockOdrcReport error:", error);
     return res.status(500).json({
@@ -1302,8 +1316,7 @@ exports.getStockAgeingReport = async (req, res) => {
       ...params,
     ]);
 
-    return res.json({
-      success: true,
+    const payload = {
       filters: {
         asOnDate,
         branchId,
@@ -1322,7 +1335,9 @@ exports.getStockAgeingReport = async (req, res) => {
       branchWise: branchRows || [],
       modelWise: modelRows || [],
       rows: rows || [],
-    });
+    };
+
+    return res.json(successResponse(payload));
   } catch (error) {
     console.error("getStockAgeingReport error:", error);
     return res.status(500).json({
