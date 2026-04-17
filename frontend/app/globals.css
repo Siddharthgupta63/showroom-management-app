@@ -39,3 +39,163 @@ body {
   50% { transform: translateY(-6px); }
   100% { transform: translateY(0px); }
 }
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 10.5px !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ❌ hide unwanted UI */
+  aside,
+  nav,
+  button,
+  .sidebar,
+  .no-print,
+  .print-hide,
+  header,
+  footer {
+    display: none !important;
+  }
+
+  /* ✅ main container full width */
+  .report-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* ✅ PRINT HEADER */
+  .print-header {
+    display: block !important;
+    margin-bottom: 8px !important;
+    padding-bottom: 6px !important;
+    border-bottom: 2px solid #111 !important;
+  }
+
+  .print-header h1 {
+    font-size: 18px !important;
+    margin: 0 0 4px 0 !important;
+  }
+
+  .print-header .meta {
+    font-size: 9px !important;
+    color: #444 !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+
+  /* ✅ SUMMARY GRID FIX (alignment issue solved) */
+  .summary-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 6px !important;
+    margin-bottom: 8px !important;
+  }
+
+  .summary-card {
+    border: 1px solid #d1d5db !important;
+    border-radius: 6px !important;
+    padding: 6px 8px !important;
+    background: #fff !important;
+  }
+
+  .summary-card .label {
+    font-size: 9px !important;
+    color: #555 !important;
+    margin-bottom: 2px !important;
+  }
+
+  .summary-card .value {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    line-height: 1.1 !important;
+  }
+
+  .summary-card .subvalue {
+    font-size: 8px !important;
+    color: #666 !important;
+  }
+
+  /* ✅ CHART GRID (fix large month chart issue) */
+  .chart-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+    margin-bottom: 8px !important;
+  }
+
+  .chart-card {
+    border: 1px solid #d1d5db !important;
+    border-radius: 6px !important;
+    padding: 6px !important;
+    break-inside: avoid !important;
+  }
+
+  .chart-card h3 {
+    font-size: 10px !important;
+    margin-bottom: 4px !important;
+  }
+
+  canvas,
+  svg {
+    height: 160px !important;
+    max-height: 160px !important;
+    width: 100% !important;
+  }
+
+  /* ✅ SECTION */
+  .print-section {
+    margin-bottom: 8px !important;
+    break-inside: avoid !important;
+  }
+
+  .print-section h2 {
+    font-size: 11px !important;
+    margin-bottom: 4px !important;
+    border-bottom: 1px solid #ccc !important;
+  }
+
+  /* ✅ TABLE (compact) */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 8.5px !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+  }
+
+  th,
+  td {
+    border: 1px solid #d1d5db !important;
+    padding: 3px 4px !important;
+    line-height: 1.2 !important;
+    word-break: break-word !important;
+  }
+
+  th {
+    background: #f3f4f6 !important;
+    font-weight: 600 !important;
+  }
+
+  /* ✅ DETAILED TABLE HIDE IN PRINT */
+  .detailed-sales-table {
+    display: none !important;
+  }
+}
