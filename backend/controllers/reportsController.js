@@ -834,12 +834,15 @@ exports.exportStockReport = async (req, res) => {
 // --------------------------------------------------
 // ODRC REPORT
 // --------------------------------------------------
+// --------------------------------------------------
+// ODRC REPORT
+// --------------------------------------------------
 exports.getStockOdrcReport = async (req, res) => {
   try {
-    const reportDate = safeDateString(req.query.reportDate) || safeDateString(new Date());
+    const reportDate =
+      safeDateString(req.query.reportDate) || safeDateString(new Date());
     const branchId = normalizeString(req.query.branchId);
     const search = normalizeString(req.query.search);
-    const prevDate = previousDate(reportDate);
 
     let commonWhere = ` WHERE 1 = 1 `;
     const commonParams = [];
@@ -862,38 +865,49 @@ exports.getStockOdrcReport = async (req, res) => {
       commonParams.push(q, q, q, q, q, q);
     }
 
-    const retailExtraWhere = `
-      ${branchId ? " AND vpi.current_branch_id = ? " : ""}
-      ${search ? `
-        AND (
-          COALESCE(vpi.chassis_number, '') LIKE ?
-          OR COALESCE(vpi.engine_number, '') LIKE ?
-          OR COALESCE(vm.model_name, '') LIKE ?
-          OR COALESCE(vv.variant_name, '') LIKE ?
-          OR COALESCE(s.customer_name, '') LIKE ?
-          OR COALESCE(s.mobile_number, '') LIKE ?
-        )
-      ` : ""}
-    `;
+    let retailWhere = ` WHERE DATE(s.sale_date) = ? `;
+    const retailParamsBase = [reportDate];
 
-    const retailExtraParams = [
-      ...(branchId ? [branchId] : []),
-      ...(search ? (() => {
-        const q = applyLike(search);
-        return [q, q, q, q, q, q];
-      })() : []),
-    ];
+    if (branchId) {
+      retailWhere += ` AND vpi.current_branch_id = ? `;
+      retailParamsBase.push(branchId);
+    }
+
+    if (search) {
+      retailWhere += ` AND (
+        COALESCE(vpi.chassis_number, '') LIKE ?
+        OR COALESCE(vpi.engine_number, '') LIKE ?
+        OR COALESCE(vm.model_name, '') LIKE ?
+        OR COALESCE(vv.variant_name, '') LIKE ?
+        OR COALESCE(s.customer_name, '') LIKE ?
+        OR COALESCE(s.mobile_number, '') LIKE ?
+      ) `;
+      const q = applyLike(search);
+      retailParamsBase.push(q, q, q, q, q, q);
+    }
 
     const overallSql = `
       SELECT
         (
-          SELECT COUNT(*)
-          FROM vehicle_purchase_items vpi
-          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
-          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
-          LEFT JOIN sales s ON s.id = vpi.sale_id
-          ${commonWhere}
-          AND DATE(${STOCK_DATE_EXPR}) <= ?
+          (
+            SELECT COUNT(*)
+            FROM vehicle_purchase_items vpi
+            LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+            LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+            LEFT JOIN sales s ON s.id = vpi.sale_id
+            ${commonWhere}
+            AND DATE(${STOCK_DATE_EXPR}) < ?
+          )
+          -
+          (
+            SELECT COUNT(*)
+            FROM sales s
+            LEFT JOIN vehicle_purchase_items vpi ON vpi.sale_id = s.id
+            LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+            LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+            ${commonWhere}
+            AND DATE(s.sale_date) < ?
+          )
         ) AS opening_stock,
 
         (
@@ -912,48 +926,44 @@ exports.getStockOdrcReport = async (req, res) => {
           LEFT JOIN vehicle_purchase_items vpi ON vpi.sale_id = s.id
           LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
           LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
-          WHERE DATE(s.sale_date) = ?
-          ${retailExtraWhere}
+          ${retailWhere}
         ) AS retail_count,
 
         (
-          SELECT COUNT(*)
-          FROM vehicle_purchase_items vpi
-          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
-          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
-          LEFT JOIN sales s ON s.id = vpi.sale_id
-          ${commonWhere}
-          AND DATE(${STOCK_DATE_EXPR}) <= ?
-        )
-        +
-        (
-          SELECT COUNT(*)
-          FROM vehicle_purchase_items vpi
-          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
-          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
-          LEFT JOIN sales s ON s.id = vpi.sale_id
-          ${commonWhere}
-          AND DATE(${STOCK_DATE_EXPR}) = ?
-        )
-        -
-        (
-          SELECT COUNT(*)
-          FROM sales s
-          LEFT JOIN vehicle_purchase_items vpi ON vpi.sale_id = s.id
-          LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
-          LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
-          WHERE DATE(s.sale_date) = ?
-          ${retailExtraWhere}
+          (
+            SELECT COUNT(*)
+            FROM vehicle_purchase_items vpi
+            LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+            LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+            LEFT JOIN sales s ON s.id = vpi.sale_id
+            ${commonWhere}
+            AND DATE(${STOCK_DATE_EXPR}) <= ?
+          )
+          -
+          (
+            SELECT COUNT(*)
+            FROM sales s
+            LEFT JOIN vehicle_purchase_items vpi ON vpi.sale_id = s.id
+            LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+            LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+            ${commonWhere}
+            AND DATE(s.sale_date) <= ?
+          )
         ) AS closing_stock
     `;
 
     const overallParams = [
-      ...commonParams, prevDate,
-      ...commonParams, reportDate,
-      reportDate, ...retailExtraParams,
-      ...commonParams, prevDate,
-      ...commonParams, reportDate,
-      reportDate, ...retailExtraParams,
+      ...commonParams,
+      reportDate,
+      ...commonParams,
+      reportDate,
+      ...commonParams,
+      reportDate,
+      ...retailParamsBase,
+      ...commonParams,
+      reportDate,
+      ...commonParams,
+      reportDate,
     ];
 
     const [overallRows] = await db.query(overallSql, overallParams);
@@ -971,22 +981,63 @@ exports.getStockOdrcReport = async (req, res) => {
       SELECT
         sb.id AS branch_id,
         sb.branch_name,
-        SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1 ELSE 0 END) AS opening_stock,
-        SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1 ELSE 0 END) AS dispatch_count,
-        SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END) AS retail_count,
+
         (
-          SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1 ELSE 0 END)
-          + SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1 ELSE 0 END)
-          - SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END)
+          SUM(
+            CASE
+              WHEN DATE(${STOCK_DATE_EXPR}) < ? THEN 1
+              ELSE 0
+            END
+          )
+          -
+          SUM(
+            CASE
+              WHEN DATE(s.sale_date) < ? THEN 1
+              ELSE 0
+            END
+          )
+        ) AS opening_stock,
+
+        SUM(
+          CASE
+            WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1
+            ELSE 0
+          END
+        ) AS dispatch_count,
+
+        SUM(
+          CASE
+            WHEN DATE(s.sale_date) = ? THEN 1
+            ELSE 0
+          END
+        ) AS retail_count,
+
+        (
+          SUM(
+            CASE
+              WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1
+              ELSE 0
+            END
+          )
+          -
+          SUM(
+            CASE
+              WHEN DATE(s.sale_date) <= ? THEN 1
+              ELSE 0
+            END
+          )
         ) AS closing_stock
+
       FROM showroom_branches sb
       LEFT JOIN vehicle_purchase_items vpi ON vpi.current_branch_id = sb.id
+      LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+      LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
       LEFT JOIN sales s ON s.id = vpi.sale_id
       ${branchWhere}
       GROUP BY sb.id, sb.branch_name
       ORDER BY sb.branch_name
       `,
-      [prevDate, reportDate, reportDate, prevDate, reportDate, reportDate, ...branchParams]
+      [reportDate, reportDate, reportDate, reportDate, reportDate, reportDate, ...branchParams]
     );
 
     let modelWhere = ` WHERE 1 = 1 `;
@@ -1014,14 +1065,53 @@ exports.getStockOdrcReport = async (req, res) => {
       `
       SELECT
         CONCAT_WS(' / ', vm.model_name, vv.variant_name) AS model_label,
-        SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1 ELSE 0 END) AS opening_stock,
-        SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1 ELSE 0 END) AS dispatch_count,
-        SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END) AS retail_count,
+
         (
-          SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1 ELSE 0 END)
-          + SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1 ELSE 0 END)
-          - SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END)
+          SUM(
+            CASE
+              WHEN DATE(${STOCK_DATE_EXPR}) < ? THEN 1
+              ELSE 0
+            END
+          )
+          -
+          SUM(
+            CASE
+              WHEN DATE(s.sale_date) < ? THEN 1
+              ELSE 0
+            END
+          )
+        ) AS opening_stock,
+
+        SUM(
+          CASE
+            WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1
+            ELSE 0
+          END
+        ) AS dispatch_count,
+
+        SUM(
+          CASE
+            WHEN DATE(s.sale_date) = ? THEN 1
+            ELSE 0
+          END
+        ) AS retail_count,
+
+        (
+          SUM(
+            CASE
+              WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1
+              ELSE 0
+            END
+          )
+          -
+          SUM(
+            CASE
+              WHEN DATE(s.sale_date) <= ? THEN 1
+              ELSE 0
+            END
+          )
         ) AS closing_stock
+
       FROM vehicle_purchase_items vpi
       LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
       LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
@@ -1031,7 +1121,7 @@ exports.getStockOdrcReport = async (req, res) => {
       HAVING model_label IS NOT NULL AND model_label <> ''
       ORDER BY closing_stock DESC, model_label
       `,
-      [prevDate, reportDate, reportDate, prevDate, reportDate, reportDate, ...modelParams]
+      [reportDate, reportDate, reportDate, reportDate, reportDate, reportDate, ...modelParams]
     );
 
     const payload = {
@@ -1046,8 +1136,27 @@ exports.getStockOdrcReport = async (req, res) => {
         retail_count: 0,
         closing_stock: 0,
       },
-      branchWise: branchRows || [],
-      modelWise: modelRows || [],
+      branchWise: (branchRows || []).map((row) => ({
+        ...row,
+        opening_stock: Number(row.opening_stock || 0),
+        dispatch_count: Number(row.dispatch_count || 0),
+        retail_count: Number(row.retail_count || 0),
+        closing_stock: Number(row.closing_stock || 0),
+      })),
+      modelWise: (modelRows || []).map((row) => ({
+        ...row,
+        opening_stock: Number(row.opening_stock || 0),
+        dispatch_count: Number(row.dispatch_count || 0),
+        retail_count: Number(row.retail_count || 0),
+        closing_stock: Number(row.closing_stock || 0),
+      })),
+    };
+
+    payload.summary = {
+      opening_stock: Number(payload.summary.opening_stock || 0),
+      dispatch_count: Number(payload.summary.dispatch_count || 0),
+      retail_count: Number(payload.summary.retail_count || 0),
+      closing_stock: Number(payload.summary.closing_stock || 0),
     };
 
     return res.json(successResponse(payload));
@@ -1063,10 +1172,10 @@ exports.getStockOdrcReport = async (req, res) => {
 
 exports.exportStockOdrcReport = async (req, res) => {
   try {
-    const reportDate = safeDateString(req.query.reportDate) || safeDateString(new Date());
+    const reportDate =
+      safeDateString(req.query.reportDate) || safeDateString(new Date());
     const branchId = normalizeString(req.query.branchId);
     const search = normalizeString(req.query.search);
-    const prevDate = previousDate(reportDate);
 
     let modelWhere = ` WHERE 1 = 1 `;
     const modelParams = [];
@@ -1093,14 +1202,53 @@ exports.exportStockOdrcReport = async (req, res) => {
       `
       SELECT
         CONCAT_WS(' / ', vm.model_name, vv.variant_name) AS model_label,
-        SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1 ELSE 0 END) AS opening_stock,
-        SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1 ELSE 0 END) AS dispatch_count,
-        SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END) AS retail_count,
+
         (
-          SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1 ELSE 0 END)
-          + SUM(CASE WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1 ELSE 0 END)
-          - SUM(CASE WHEN DATE(s.sale_date) = ? THEN 1 ELSE 0 END)
+          SUM(
+            CASE
+              WHEN DATE(${STOCK_DATE_EXPR}) < ? THEN 1
+              ELSE 0
+            END
+          )
+          -
+          SUM(
+            CASE
+              WHEN DATE(s.sale_date) < ? THEN 1
+              ELSE 0
+            END
+          )
+        ) AS opening_stock,
+
+        SUM(
+          CASE
+            WHEN DATE(${STOCK_DATE_EXPR}) = ? THEN 1
+            ELSE 0
+          END
+        ) AS dispatch_count,
+
+        SUM(
+          CASE
+            WHEN DATE(s.sale_date) = ? THEN 1
+            ELSE 0
+          END
+        ) AS retail_count,
+
+        (
+          SUM(
+            CASE
+              WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1
+              ELSE 0
+            END
+          )
+          -
+          SUM(
+            CASE
+              WHEN DATE(s.sale_date) <= ? THEN 1
+              ELSE 0
+            END
+          )
         ) AS closing_stock
+
       FROM vehicle_purchase_items vpi
       LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
       LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
@@ -1110,7 +1258,7 @@ exports.exportStockOdrcReport = async (req, res) => {
       HAVING model_label IS NOT NULL AND model_label <> ''
       ORDER BY closing_stock DESC, model_label
       `,
-      [prevDate, reportDate, reportDate, prevDate, reportDate, reportDate, ...modelParams]
+      [reportDate, reportDate, reportDate, reportDate, reportDate, reportDate, ...modelParams]
     );
 
     const workbook = new ExcelJS.Workbook();
@@ -1124,7 +1272,16 @@ exports.exportStockOdrcReport = async (req, res) => {
       { header: "Closing Stock", key: "closing_stock", width: 16 },
     ];
 
-    rows.forEach((row) => worksheet.addRow(row));
+    rows.forEach((row) =>
+      worksheet.addRow({
+        ...row,
+        opening_stock: Number(row.opening_stock || 0),
+        dispatch_count: Number(row.dispatch_count || 0),
+        retail_count: Number(row.retail_count || 0),
+        closing_stock: Number(row.closing_stock || 0),
+      })
+    );
+
     worksheet.getRow(1).font = { bold: true };
     worksheet.views = [{ state: "frozen", ySplit: 1 }];
 
@@ -1148,7 +1305,6 @@ exports.exportStockOdrcReport = async (req, res) => {
     });
   }
 };
-
 // --------------------------------------------------
 // STOCK AGEING REPORT
 // --------------------------------------------------
