@@ -12,6 +12,7 @@ const rcRoutes = require("./routes/rc");
 const vehicleStockRoutes = require("./routes/vehicleStock");
 const stockTransfersRoutes = require("./routes/stockTransfers");
 const stockTransferChallansRoutes = require("./routes/stockTransferChallans");
+const purchaseVsSalesRoutes = require("./routes/reportsPurchaseVsSales");
 // const stockRoutes = require("./routes/stock"); // ❌ do not mount duplicate /api/stock router
 const reportsRoutes = require("./routes/reports");
 dotenv.config(); // load env first
@@ -78,6 +79,7 @@ app.use("/api/renewal", require("./routes/renewal"));
 
 app.use("/api/stock-transfers", stockTransfersRoutes);
 app.use("/api/stock-transfer-challans", stockTransferChallansRoutes);
+app.use("/api/reports", purchaseVsSalesRoutes);
 
 app.use("/api", require("./routes/whatsappSettings"));
 app.use("/api/pipeline", require("./routes/pipeline"));

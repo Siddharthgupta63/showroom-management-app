@@ -9,7 +9,11 @@ import SessionGuardian from "@/components/SessionGuardian";
 import IdleLogoutClient from "@/components/IdleLogoutClient";
 import PasswordPopup from "@/components/PasswordPopup";
 
-export default function ClientLayout({ children }: { children: React.ReactNode }) {
+export default function ClientLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
 
   const noShell =
@@ -29,11 +33,15 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         </main>
       ) : (
         <div className="min-h-screen bg-background text-foreground">
-          <div className="hidden lg:block fixed left-0 top-0 h-screen w-64">
-            <Sidebar />
-          </div>
+          <Sidebar />
 
-          <main className="min-h-screen lg:ml-64">
+          <main
+            className="min-h-screen transition-all duration-300 ease-out"
+            style={{
+              marginLeft: "var(--sidebar-width, 250px)",
+              width: "calc(100% - var(--sidebar-width, 250px))",
+            }}
+          >
             <div className="px-4 py-4 lg:px-6">{children}</div>
           </main>
         </div>

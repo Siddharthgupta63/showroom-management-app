@@ -199,3 +199,13 @@ body {
     display: none !important;
   }
 }
+
+:root {
+  --sidebar-width: 250px;
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --sidebar-width: 0px;
+  }
+}
