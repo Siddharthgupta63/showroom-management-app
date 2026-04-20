@@ -42,13 +42,6 @@ function formatDateOnly(value?: string | null) {
   return d.toLocaleDateString("en-GB");
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString("en-GB");
-}
-
 function statusLabel(status?: string) {
   if (!status) return "-";
   if (status === "in_stock") return "In Stock";
@@ -151,12 +144,12 @@ function SectionCard({
   className?: string;
 }) {
   return (
-    <div className={`rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden report-card ${className}`}>
+    <div
+      className={`rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden report-card ${className}`}
+    >
       <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-4">
         <div className="text-lg font-semibold text-slate-900 section-title">{title}</div>
-        {subtitle ? (
-          <div className="mt-1 text-sm text-slate-500">{subtitle}</div>
-        ) : null}
+        {subtitle ? <div className="mt-1 text-sm text-slate-500">{subtitle}</div> : null}
       </div>
       <div className="p-5 section-body">{children}</div>
     </div>
@@ -184,7 +177,7 @@ export default function StockReportPage() {
     fromDate: "",
     toDate: "",
     branchId: "",
-    status: "",
+    status: "in_stock",
     search: "",
   });
 
@@ -197,8 +190,8 @@ export default function StockReportPage() {
     if (filters.fromDate) params.set("fromDate", filters.fromDate);
     if (filters.toDate) params.set("toDate", filters.toDate);
     if (filters.branchId) params.set("branchId", filters.branchId);
-    if (filters.status) params.set("status", filters.status);
     if (filters.search) params.set("search", filters.search);
+    params.set("status", "in_stock");
     return params.toString();
   }, [filters]);
 
@@ -225,22 +218,10 @@ export default function StockReportPage() {
   const summaryCards = useMemo(
     () => [
       {
-        label: "Total Stock",
-        value: summary.total_stock || 0,
-        accent: "bg-blue-600",
-        subtitle: "All rows in current filter",
-      },
-      {
-        label: "In Stock",
+        label: "Current Stock",
         value: summary.in_stock_count || 0,
         accent: "bg-amber-500",
-        subtitle: "Vehicles currently available",
-      },
-      {
-        label: "Sold",
-        value: summary.sold_count || 0,
-        accent: "bg-emerald-600",
-        subtitle: "Vehicles already sold",
+        subtitle: "Available stock units",
       },
       {
         label: "0-30 Days",
@@ -274,7 +255,7 @@ export default function StockReportPage() {
     1
   );
 
-  const stockMixMax = Math.max(summary.in_stock_count || 0, summary.sold_count || 0, 1);
+  const stockMixMax = Math.max(summary.in_stock_count || 0, 1);
 
   const fetchBranches = async () => {
     try {
@@ -389,7 +370,7 @@ export default function StockReportPage() {
       fromDate: "",
       toDate: "",
       branchId: "",
-      status: "",
+      status: "in_stock",
       search: "",
     });
 
@@ -399,9 +380,7 @@ export default function StockReportPage() {
   };
 
   const handlePrint = async () => {
-    const includeDetailed = window.confirm(
-      "Include Detailed Stock Table in print?"
-    );
+    const includeDetailed = window.confirm("Include Detailed Stock Table in print?");
 
     setShowDetailed(includeDetailed);
     setPrinting(true);
@@ -603,7 +582,7 @@ export default function StockReportPage() {
       `}</style>
 
       <div className="stock-report-print-root">
-     <div className="w-full max-w-none p-4 md:p-6 space-y-4 print-report-wrap">
+        <div className="w-full max-w-none p-4 md:p-6 space-y-4 print-report-wrap">
           <div className="print-header hidden print:block">
             <div className="brand">GUPTA AUTO AGENCY</div>
             <h1>Stock Report</h1>
@@ -634,7 +613,7 @@ export default function StockReportPage() {
                   Stock Report
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  View current stock, sold stock and ageing summary.
+                  View available stock and ageing summary.
                 </p>
               </div>
 
@@ -656,11 +635,6 @@ export default function StockReportPage() {
               onApply={handleApply}
               onReset={handleReset}
               branchOptions={activeBranches}
-              showStatus
-              statusOptions={[
-                { value: "in_stock", label: "In Stock" },
-                { value: "sold", label: "Sold" },
-              ]}
             />
           </div>
 
@@ -670,7 +644,7 @@ export default function StockReportPage() {
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 summary-grid-print">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 summary-grid-print">
             {summaryCards.map((card) => (
               <StatCard
                 key={card.label}
@@ -685,7 +659,7 @@ export default function StockReportPage() {
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 print-two-col">
             <SectionCard
               title="Stock Mix"
-              subtitle="Current distribution of in-stock and sold vehicles"
+              subtitle="Current distribution of available vehicles"
               className="xl:col-span-1"
             >
               <div className="space-y-5">
@@ -694,12 +668,6 @@ export default function StockReportPage() {
                   value={summary.in_stock_count || 0}
                   max={stockMixMax}
                   colorClass="bg-amber-500"
-                />
-                <AgeBar
-                  label="Sold"
-                  value={summary.sold_count || 0}
-                  max={stockMixMax}
-                  colorClass="bg-emerald-600"
                 />
               </div>
             </SectionCard>
@@ -751,10 +719,7 @@ export default function StockReportPage() {
                   Branch: <span className="font-semibold">{selectedBranchLabel}</span>
                 </div>
                 <div className="mt-1 text-sm text-slate-700">
-                  Status:{" "}
-                  <span className="font-semibold">
-                    {filters.status ? statusLabel(filters.status) : "All"}
-                  </span>
+                  Status: <span className="font-semibold">In Stock</span>
                 </div>
               </div>
 
@@ -807,15 +772,13 @@ export default function StockReportPage() {
                       <th className="text-left px-3 py-2">Chassis</th>
                       <th className="text-left px-3 py-2">Engine</th>
                       <th className="text-left px-3 py-2">Status</th>
-                      <th className="text-left px-3 py-2">Customer</th>
-                      <th className="text-left px-3 py-2">Mobile</th>
                       <th className="text-right px-3 py-2">Ageing</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                        <td colSpan={8} className="px-3 py-8 text-center text-slate-500">
                           No stock rows found for the selected filters.
                         </td>
                       </tr>
@@ -839,8 +802,6 @@ export default function StockReportPage() {
                               {statusLabel(row.status_code)}
                             </span>
                           </td>
-                          <td className="px-3 py-2">{row.customer_name || "-"}</td>
-                          <td className="px-3 py-2">{row.mobile_number || "-"}</td>
                           <td className="px-3 py-2 text-right font-semibold">
                             {Number(row.ageing_days || 0)}
                           </td>

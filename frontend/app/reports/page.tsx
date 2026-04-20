@@ -87,7 +87,7 @@ function getAuthHeaders() {
 
 function StatCard({ title, value, subtitle, accent = "bg-blue-600" }: ReportCardProps) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print-card">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-medium text-slate-500">{title}</div>
@@ -112,7 +112,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden print-card">
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-4">
         <div>
           <div className="text-lg font-semibold text-slate-900">{title}</div>
@@ -122,6 +122,24 @@ function Panel({
       </div>
       <div className="p-5">{children}</div>
     </div>
+  );
+}
+
+function PrintButton({
+  onClick,
+  printing,
+}: {
+  onClick: () => void;
+  printing: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={printing}
+      className="inline-flex items-center rounded-xl bg-slate-800 text-white px-4 py-2.5 text-sm font-semibold shadow-sm hover:bg-slate-700 disabled:opacity-60 no-print"
+    >
+      {printing ? "Preparing..." : "Print"}
+    </button>
   );
 }
 
@@ -137,7 +155,7 @@ function QuickLink({
   return (
     <Link
       href={href}
-      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md hover:border-slate-300"
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md hover:border-slate-300 print-card"
     >
       <div className="text-base font-semibold text-slate-900">{title}</div>
       <div className="mt-1 text-sm text-slate-500">{desc}</div>
@@ -195,6 +213,7 @@ function HorizontalBars({
 export default function ReportsDashboardPage() {
   const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [printing, setPrinting] = useState(false);
   const [generatedAt, setGeneratedAt] = useState("");
   const [salesSummary, setSalesSummary] = useState<SalesSummary>({});
   const [stockSummary, setStockSummary] = useState<StockSummary>({});
@@ -204,17 +223,17 @@ export default function ReportsDashboardPage() {
   const [pvssModels, setPvssModels] = useState<PurchaseVsSalesModel[]>([]);
   const [error, setError] = useState("");
 
-const today = useMemo(() => formatLocalDate(new Date()), []);
+  const today = useMemo(() => formatLocalDate(new Date()), []);
 
-const mtdFrom = useMemo(() => {
-  const d = new Date();
-  return formatLocalDate(new Date(d.getFullYear(), d.getMonth(), 1));
-}, []);
+  const mtdFrom = useMemo(() => {
+    const d = new Date();
+    return formatLocalDate(new Date(d.getFullYear(), d.getMonth(), 1));
+  }, []);
 
-const ytdFrom = useMemo(() => {
-  const d = new Date();
-  return formatLocalDate(getFinancialYearStartLocal(d));
-}, []);
+  const ytdFrom = useMemo(() => {
+    const d = new Date();
+    return formatLocalDate(getFinancialYearStartLocal(d));
+  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -231,13 +250,7 @@ const ytdFrom = useMemo(() => {
 
         const headers = getAuthHeaders();
 
-        const [
-          salesRes,
-          stockRes,
-          odrcRes,
-          ageingRes,
-          pvssRes,
-        ] = await Promise.all([
+        const [salesRes, stockRes, odrcRes, ageingRes, pvssRes] = await Promise.all([
           fetch(`${API_BASE}/api/reports/sales/analytics?fromDate=${mtdFrom}&toDate=${today}`, {
             headers,
           }),
@@ -282,12 +295,71 @@ const ytdFrom = useMemo(() => {
     load();
   }, [mounted, mtdFrom, today, ytdFrom]);
 
-  const profit = Number(pvssSummary.sale_amount || 0) - Number(pvssSummary.purchase_amount || 0);
   const netMovement = Number(pvssSummary.sale_count || 0) - Number(pvssSummary.purchase_count || 0);
+
+  const handlePrint = async () => {
+    setPrinting(true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    window.print();
+    setTimeout(() => setPrinting(false), 250);
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
-     <div className="w-full max-w-none p-4 md:p-6 space-y-6">
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 10mm;
+          }
+
+          html,
+          body {
+            background: #ffffff !important;
+            color: #0f172a !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          .no-print,
+          aside,
+          nav,
+          button {
+            display: none !important;
+          }
+
+          a {
+            text-decoration: none !important;
+            color: inherit !important;
+          }
+
+          .print-grid-4 {
+            display: grid !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 10px !important;
+          }
+
+          .print-grid-3 {
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 10px !important;
+          }
+
+          .print-grid-2 {
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 10px !important;
+          }
+
+          .print-card {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+            box-shadow: none !important;
+          }
+        }
+      `}</style>
+
+      <div className="w-full max-w-none p-4 md:p-6 space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">
@@ -298,12 +370,16 @@ const ytdFrom = useMemo(() => {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Generated
-            </div>
-            <div className="mt-1 text-sm font-semibold text-slate-800">
-              {mounted ? generatedAt : "--"}
+          <div className="flex items-center gap-3 no-print">
+            <PrintButton onClick={handlePrint} printing={printing} />
+
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Generated
+              </div>
+              <div className="mt-1 text-sm font-semibold text-slate-800">
+                {mounted ? generatedAt : "--"}
+              </div>
             </div>
           </div>
         </div>
@@ -320,7 +396,7 @@ const ytdFrom = useMemo(() => {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 print-grid-4">
           <StatCard
             title="MTD Sales"
             value={salesSummary.total_sales || 0}
@@ -347,7 +423,7 @@ const ytdFrom = useMemo(() => {
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 print-grid-3">
           <StatCard
             title="YTD Purchases"
             value={pvssSummary.purchase_count || 0}
@@ -361,12 +437,6 @@ const ytdFrom = useMemo(() => {
             accent="bg-emerald-600"
           />
           <StatCard
-            title="Estimated Profit"
-            value={formatAmount(profit)}
-            subtitle={`Net Units: ${netMovement}`}
-            accent={profit >= 0 ? "bg-emerald-600" : "bg-rose-600"}
-          />
-          <StatCard
             title="Accessories + Insurance"
             value={formatAmount(
               Number(salesSummary.total_accessories || 0) +
@@ -377,7 +447,7 @@ const ytdFrom = useMemo(() => {
           />
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 print-grid-3">
           <QuickLink
             title="Sales Report"
             href="/reports/sales"
@@ -391,7 +461,7 @@ const ytdFrom = useMemo(() => {
           <QuickLink
             title="Purchase vs Sales"
             href="/reports/purchase-vs-sales"
-            desc="Business movement report with purchase, sales, profit and comparison."
+            desc="Business movement report with purchase, sales and comparison."
           />
           <QuickLink
             title="ODRC Report"
@@ -410,7 +480,7 @@ const ytdFrom = useMemo(() => {
           />
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-grid-2">
           <Panel
             title="Inventory Health Snapshot"
             subtitle="Fast management view of ageing and live stock"
@@ -508,7 +578,7 @@ const ytdFrom = useMemo(() => {
           </Panel>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-grid-2">
           <Panel
             title="Top Purchase vs Sales Models"
             subtitle="YTD comparison by model"
@@ -533,27 +603,22 @@ const ytdFrom = useMemo(() => {
 
           <Panel
             title="Executive Summary"
-            subtitle="What to look at first"
+            subtitle="Operational highlights"
           >
             <div className="space-y-3 text-sm text-slate-700">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <span className="font-semibold text-slate-900">Sales momentum:</span>{" "}
-                MTD sales are <span className="font-semibold">{salesSummary.total_sales || 0}</span> units worth{" "}
-                <span className="font-semibold">{formatAmount(salesSummary.total_amount)}</span>.
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <span className="font-semibold text-slate-900">Stock pressure:</span>{" "}
-                90+ ageing units are <span className="font-semibold">{ageingSummary.bucket_90_plus || 0}</span>.
-                This should be your highest-priority clearance bucket.
+                90+ ageing units are{" "}
+                <span className="font-semibold">{ageingSummary.bucket_90_plus || 0}</span>. This
+                should be your highest-priority clearance bucket.
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <span className="font-semibold text-slate-900">Purchase vs sales:</span>{" "}
-                YTD purchases are <span className="font-semibold">{pvssSummary.purchase_count || 0}</span> and YTD sales are{" "}
-                <span className="font-semibold">{pvssSummary.sale_count || 0}</span>.
-                Estimated movement gap is{" "}
-                <span className="font-semibold">{netMovement}</span> units.
+                YTD purchases are{" "}
+                <span className="font-semibold">{pvssSummary.purchase_count || 0}</span> and YTD
+                sales are <span className="font-semibold">{pvssSummary.sale_count || 0}</span>.
+                Movement gap is <span className="font-semibold">{netMovement}</span> units.
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">

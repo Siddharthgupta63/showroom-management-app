@@ -777,7 +777,7 @@ export default function PurchaseVsSalesReport() {
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 summary-grid-print">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 summary-grid-print">
             <StatCard
               label="Purchases"
               value={summary.purchase_count || 0}
@@ -790,12 +790,7 @@ export default function PurchaseVsSalesReport() {
               subtitle={formatAmount(summary.sale_amount)}
               accent="bg-blue-600"
             />
-            <StatCard
-              label="Profit / Movement Gap"
-              value={formatAmount(profit)}
-              subtitle={`Net Units: ${netUnits}`}
-              accent={profit >= 0 ? "bg-emerald-600" : "bg-rose-600"}
-            />
+          
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-two-col">

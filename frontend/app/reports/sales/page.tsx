@@ -25,11 +25,6 @@ type Branch = {
   is_active?: number | boolean;
 };
 
-type CountAmount = {
-  total_sales: number;
-  total_amount: number;
-};
-
 type Summary = {
   total_sales: number;
   total_amount: number;
@@ -103,7 +98,39 @@ function formatLocalDate(date: Date) {
 
 function getFinancialYearStartLocal(date: Date) {
   const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
-  return new Date(year, 3, 1); // 1 April
+  return new Date(year, 3, 1);
+}
+
+function getMonthStartLocal(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getDefaultDates(range: "TODAY" | "MTD" | "YTD" | "CUSTOM") {
+  const today = new Date();
+  const to = formatLocalDate(today);
+
+  if (range === "TODAY") {
+    return { fromDate: to, toDate: to };
+  }
+
+  if (range === "MTD") {
+    return {
+      fromDate: formatLocalDate(getMonthStartLocal(today)),
+      toDate: to,
+    };
+  }
+
+  if (range === "YTD") {
+    return {
+      fromDate: formatLocalDate(getFinancialYearStartLocal(today)),
+      toDate: to,
+    };
+  }
+
+  return {
+    fromDate: formatLocalDate(getMonthStartLocal(today)),
+    toDate: to,
+  };
 }
 
 function SectionCard({
@@ -116,9 +143,7 @@ function SectionCard({
   className?: string;
 }) {
   return (
-    <div
-      className={`rounded-xl border border-slate-300 bg-white shadow-sm overflow-hidden report-card ${className}`}
-    >
+    <div className={`rounded-xl border border-slate-300 bg-white shadow-sm overflow-hidden report-card ${className}`}>
       <div className="px-4 py-3 border-b border-slate-300 bg-slate-50 font-semibold section-title text-slate-900">
         {title}
       </div>
@@ -130,200 +155,24 @@ function SectionCard({
 function StatCard({
   label,
   value,
-  subValue,
+  accent = "bg-blue-600",
+  subtitle,
 }: {
   label: string;
-  value: string | number;
-  subValue?: string | number;
+  value: React.ReactNode;
+  accent?: string;
+  subtitle?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-300 bg-white p-4 shadow-sm stat-card min-h-[124px] flex flex-col justify-between">
-      <div className="text-[15px] text-slate-500 leading-snug stat-label">{label}</div>
-      <div className="mt-2 stat-value-wrap">
-        <div className="text-[18px] md:text-[21px] xl:text-[22px] font-bold text-slate-900 leading-tight break-words stat-value">
-          {value}
+    <div className="rounded-xl border border-slate-300 bg-white shadow-sm p-4 report-card">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-slate-500">{label}</div>
+          <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
+          {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
         </div>
-        {subValue !== undefined && (
-          <div className="mt-1 text-sm text-slate-500 stat-subvalue">{subValue}</div>
-        )}
+        <div className={`w-2 h-12 rounded-full ${accent}`} />
       </div>
-    </div>
-  );
-}
-
-function SimplePieChart({
-  data,
-  labelKey,
-  valueKey,
-  title,
-}: {
-  data: any[];
-  labelKey: string;
-  valueKey: string;
-  title: string;
-}) {
-  const total = data.reduce((sum, item) => sum + Number(item[valueKey] || 0), 0);
-
-  const colors = [
-    "#2563eb",
-    "#16a34a",
-    "#dc2626",
-    "#ca8a04",
-    "#7c3aed",
-    "#0891b2",
-    "#ea580c",
-    "#475569",
-  ];
-
-  let start = 0;
-
-  const segments = data.map((item, index) => {
-    const value = Number(item[valueKey] || 0);
-    const percent = total > 0 ? (value / total) * 100 : 0;
-    const end = start + percent;
-
-    const segment = {
-      ...item,
-      value,
-      percent,
-      color: colors[index % colors.length],
-      start,
-      end,
-    };
-
-    start = end;
-    return segment;
-  });
-
-  const makeArc = (startPercent: number, endPercent: number) => {
-    const startAngle = (startPercent / 100) * 360 - 90;
-    const endAngle = (endPercent / 100) * 360 - 90;
-
-    const polarToCartesian = (cx: number, cy: number, r: number, angle: number) => {
-      const rad = (angle * Math.PI) / 180;
-      return {
-        x: cx + r * Math.cos(rad),
-        y: cy + r * Math.sin(rad),
-      };
-    };
-
-    const startOuter = polarToCartesian(50, 50, 40, startAngle);
-    const endOuter = polarToCartesian(50, 50, 40, endAngle);
-    const startInner = polarToCartesian(50, 50, 22, endAngle);
-    const endInner = polarToCartesian(50, 50, 22, startAngle);
-    const largeArc = endPercent - startPercent > 50 ? 1 : 0;
-
-    return `
-      M ${startOuter.x} ${startOuter.y}
-      A 40 40 0 ${largeArc} 1 ${endOuter.x} ${endOuter.y}
-      L ${startInner.x} ${startInner.y}
-      A 22 22 0 ${largeArc} 0 ${endInner.x} ${endInner.y}
-      Z
-    `;
-  };
-
-  return (
-    <div className="space-y-4 chart-block">
-      <div className="text-sm font-medium text-slate-700">{title}</div>
-
-      {segments.length === 0 || total === 0 ? (
-        <div className="flex items-center justify-center h-56 rounded-lg bg-slate-50 text-slate-400">
-          No data available
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4 items-center chart-wrap">
-          <div className="w-full flex justify-center">
-            <svg
-              viewBox="0 0 100 100"
-              className="w-44 h-44 print-chart-svg"
-              aria-label={title}
-            >
-              {segments.map((segment, index) => (
-                <path
-                  key={index}
-                  d={makeArc(segment.start, segment.end)}
-                  fill={segment.color}
-                />
-              ))}
-              <circle cx="50" cy="50" r="16" fill="white" />
-            </svg>
-          </div>
-
-          <div className="space-y-2">
-            {segments.map((segment, index) => (
-              <div
-                key={index}
-                className="flex items-center justify-between gap-3 text-sm"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className="inline-block h-3 w-3 rounded-full shrink-0"
-                    style={{ backgroundColor: segment.color }}
-                  />
-                  <span className="truncate">
-                    {segment[labelKey] || "Unknown"}
-                  </span>
-                </div>
-                <span className="text-slate-600 shrink-0">
-                  {segment.value} ({segment.percent.toFixed(1)}%)
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SimpleBarChart({
-  data,
-  labelKey,
-  valueKey,
-  title,
-  compact = false,
-}: {
-  data: any[];
-  labelKey: string;
-  valueKey: string;
-  title: string;
-  compact?: boolean;
-}) {
-  const max = Math.max(...data.map((item) => Number(item[valueKey] || 0)), 0);
-
-  const wrapperClass = compact ? "space-y-4 max-w-[520px]" : "space-y-3";
-
-  return (
-    <div className="space-y-4 chart-block">
-      <div className="text-sm font-medium text-slate-700">{title}</div>
-
-      {data.length === 0 || max === 0 ? (
-        <div className="flex items-center justify-center h-56 rounded-lg bg-slate-50 text-slate-400">
-          No data available
-        </div>
-      ) : (
-        <div className={wrapperClass}>
-          {data.map((item, index) => {
-            const value = Number(item[valueKey] || 0);
-            const width = max > 0 ? `${(value / max) * 100}%` : "0%";
-
-            return (
-              <div key={index} className="grid grid-cols-[56px_1fr_56px] gap-3 items-center">
-                <div className="text-sm text-slate-600 text-right">
-                  {String(item[labelKey] ?? "")}
-                </div>
-                <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-blue-600"
-                    style={{ width }}
-                  />
-                </div>
-                <div className="text-sm font-medium text-slate-700">{value}</div>
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -347,107 +196,239 @@ function PrintOptionsModal({
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const OptionRow = ({
+  const CheckRow = ({
     label,
-    field,
+    value,
+    onChange,
   }: {
     label: string;
-    field: keyof PrintOptions;
+    value: boolean;
+    onChange: () => void;
   }) => (
-    <label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2 cursor-pointer">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
-      <input
-        type="checkbox"
-        checked={options[field]}
-        onChange={() => toggle(field)}
-        className="h-4 w-4"
-      />
+    <label className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 px-3 py-2">
+      <span className="text-sm text-slate-700">{label}</span>
+      <input type="checkbox" checked={value} onChange={onChange} className="h-4 w-4" />
     </label>
   );
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4 no-print">
-      <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl border">
-        <div className="px-5 py-4 border-b">
-          <h3 className="text-lg font-bold text-slate-900">Print Options</h3>
-          <p className="text-sm text-slate-500 mt-1">
-            Select which sections you want in the PDF / print.
-          </p>
+      <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl border border-slate-300 overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-200">
+          <div className="text-lg font-semibold text-slate-900">Print Options</div>
+          <div className="mt-1 text-sm text-slate-500">
+            Choose what to include in the printed sales report.
+          </div>
         </div>
 
         <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <OptionRow label="Summary Cards" field="summary" />
-          <OptionRow label="Branch Share Pie Chart" field="branchPie" />
-          <OptionRow label="Model Share Pie Chart" field="modelPie" />
-          <OptionRow label="Date-wise Retail Chart" field="dateChart" />
-          <OptionRow label="Month-wise Retail Chart" field="monthChart" />
-          <OptionRow label="Model-wise Sales Table" field="modelTable" />
-          <OptionRow label="Month-wise Sales Table" field="monthTable" />
-          <OptionRow label="Detailed Sales Table" field="detailedTable" />
+          <CheckRow label="Summary Cards" value={options.summary} onChange={() => toggle("summary")} />
+          <CheckRow label="Branch Pie" value={options.branchPie} onChange={() => toggle("branchPie")} />
+          <CheckRow label="Model Pie" value={options.modelPie} onChange={() => toggle("modelPie")} />
+          <CheckRow label="Date Chart" value={options.dateChart} onChange={() => toggle("dateChart")} />
+          <CheckRow label="Month Chart" value={options.monthChart} onChange={() => toggle("monthChart")} />
+          <CheckRow label="Model Table" value={options.modelTable} onChange={() => toggle("modelTable")} />
+          <CheckRow label="Month Table" value={options.monthTable} onChange={() => toggle("monthTable")} />
+          <CheckRow
+            label="Detailed Sales Table"
+            value={options.detailedTable}
+            onChange={() => toggle("detailedTable")}
+          />
         </div>
 
-        <div className="px-5 py-4 border-t flex justify-between gap-2 flex-wrap">
-          <div className="flex gap-2">
-            <button
-              onClick={() =>
-                setOptions({
-                  summary: true,
-                  branchPie: true,
-                  modelPie: true,
-                  dateChart: true,
-                  monthChart: true,
-                  modelTable: true,
-                  monthTable: true,
-                  detailedTable: false,
-                })
-              }
-              className="rounded-lg border px-3 py-2 text-sm font-medium"
-            >
-              Default
-            </button>
-
-            <button
-              onClick={() =>
-                setOptions({
-                  summary: true,
-                  branchPie: true,
-                  modelPie: true,
-                  dateChart: true,
-                  monthChart: true,
-                  modelTable: true,
-                  monthTable: true,
-                  detailedTable: true,
-                })
-              }
-              className="rounded-lg border px-3 py-2 text-sm font-medium"
-            >
-              All
-            </button>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              className="rounded-lg border px-4 py-2 text-sm font-medium"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              className="rounded-lg bg-slate-800 text-white px-4 py-2 text-sm font-medium"
-            >
-              Print Now
-            </button>
-          </div>
+        <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700"
+          >
+            Cancel
+          </button>
+          <button onClick={onConfirm} className="px-4 py-2 rounded-lg bg-slate-900 text-white">
+            Print
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-export default function SalesAnalyticsPage() {
+function SimplePieChart({
+  title,
+  rows,
+  labelKey,
+  valueKey,
+}: {
+  title: string;
+  rows: any[];
+  labelKey: string;
+  valueKey: string;
+}) {
+  const total = rows.reduce((sum, row) => sum + Number(row[valueKey] || 0), 0);
+  const colors = ["#2563eb", "#16a34a", "#d97706", "#7c3aed", "#dc2626", "#0891b2", "#475569", "#ea580c"];
+
+  let running = 0;
+  const slices = rows.map((row, idx) => {
+    const value = Number(row[valueKey] || 0);
+    const pct = total > 0 ? (value / total) * 100 : 0;
+    const start = running;
+    const end = running + pct;
+    running = end;
+    return {
+      label: row[labelKey] || "-",
+      value,
+      pct,
+      start,
+      end,
+      color: colors[idx % colors.length],
+    };
+  });
+
+  const polarToCartesian = (cx: number, cy: number, r: number, angleDeg: number) => {
+    const angle = ((angleDeg - 90) * Math.PI) / 180.0;
+    return {
+      x: cx + r * Math.cos(angle),
+      y: cy + r * Math.sin(angle),
+    };
+  };
+
+  const describeArc = (startPct: number, endPct: number) => {
+    const startAngle = (startPct / 100) * 360;
+    const endAngle = (endPct / 100) * 360;
+
+    const outerStart = polarToCartesian(50, 50, 40, endAngle);
+    const outerEnd = polarToCartesian(50, 50, 40, startAngle);
+    const innerStart = polarToCartesian(50, 50, 22, endAngle);
+    const innerEnd = polarToCartesian(50, 50, 22, startAngle);
+
+    const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+
+    return [
+      "M",
+      outerStart.x,
+      outerStart.y,
+      "A",
+      40,
+      40,
+      0,
+      largeArcFlag,
+      0,
+      outerEnd.x,
+      outerEnd.y,
+      "L",
+      innerEnd.x,
+      innerEnd.y,
+      "A",
+      22,
+      22,
+      0,
+      largeArcFlag,
+      1,
+      innerStart.x,
+      innerStart.y,
+      "Z",
+    ].join(" ");
+  };
+
+  return (
+    <div className="chart-block">
+      <div className="mb-4 text-sm font-semibold text-slate-700">{title}</div>
+
+      {rows.length === 0 || total === 0 ? (
+        <div className="h-52 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400">
+          No data available
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-4 items-center chart-wrap">
+          <div className="flex justify-center">
+            <svg viewBox="0 0 100 100" className="w-44 h-44 print-chart-svg">
+              {slices.map((slice, i) => (
+                <path key={i} d={describeArc(slice.start, slice.end)} fill={slice.color} />
+              ))}
+              <circle cx="50" cy="50" r="16" fill="white" />
+            </svg>
+          </div>
+
+          <div className="space-y-2">
+            {slices.map((slice, i) => (
+              <div key={i} className="flex items-center justify-between gap-4 text-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm shrink-0"
+                    style={{ backgroundColor: slice.color }}
+                  />
+                  <span className="truncate">{slice.label}</span>
+                </div>
+                <div className="shrink-0 text-slate-600">
+                  {slice.value} ({slice.pct.toFixed(1)}%)
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HorizontalBars({
+  title,
+  rows,
+  labelKey,
+  valueKey,
+  colorClass = "bg-blue-600",
+}: {
+  title: string;
+  rows: any[];
+  labelKey: string;
+  valueKey: string;
+  colorClass?: string;
+}) {
+  const max = Math.max(...rows.map((r) => Number(r[valueKey] || 0)), 1);
+
+  return (
+    <div className="chart-block">
+      <div className="mb-4 text-sm font-semibold text-slate-700">{title}</div>
+
+      {rows.length === 0 ? (
+        <div className="h-52 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400">
+          No data available
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {rows.map((row, i) => {
+            const width = `${(Number(row[valueKey] || 0) / max) * 100}%`;
+            return (
+              <div key={i}>
+                <div className="flex justify-between text-sm mb-1 gap-3">
+                  <span className="truncate text-slate-700">{row[labelKey] || "-"}</span>
+                  <span className="shrink-0 text-slate-500">{row[valueKey] || 0}</span>
+                </div>
+                <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${colorClass}`} style={{ width }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function SalesReportPage() {
+  const initialDates = useMemo(() => getDefaultDates("MTD"), []);
+  const [loading, setLoading] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [showPrintOptions, setShowPrintOptions] = useState(false);
+  const [generatedAt, setGeneratedAt] = useState("");
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [rows, setRows] = useState<SalesRow[]>([]);
+  const [filters, setFilters] = useState<FilterState>({
+    fromDate: initialDates.fromDate,
+    toDate: initialDates.toDate,
+    branchId: "",
+    search: "",
+  });
+
   const [summary, setSummary] = useState<Summary>({
     total_sales: 0,
     total_amount: 0,
@@ -455,29 +436,11 @@ export default function SalesAnalyticsPage() {
     total_insurance: 0,
     total_accessories: 0,
   });
-  const [mtd, setMtd] = useState<CountAmount>({
-    total_sales: 0,
-    total_amount: 0,
-  });
-  const [ytd, setYtd] = useState<CountAmount>({
-    total_sales: 0,
-    total_amount: 0,
-  });
+  const [rows, setRows] = useState<SalesRow[]>([]);
   const [modelWise, setModelWise] = useState<ModelWiseRow[]>([]);
   const [branchWise, setBranchWise] = useState<BranchWiseRow[]>([]);
   const [dateWise, setDateWise] = useState<DateWiseRow[]>([]);
   const [monthWise, setMonthWise] = useState<MonthWiseRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [generatedAt, setGeneratedAt] = useState("");
-  const [showDetailedTable, setShowDetailedTable] = useState(false);
-  const [showPrintOptions, setShowPrintOptions] = useState(false);
-
-  const [filters, setFilters] = useState<FilterState>({
-    fromDate: "",
-    toDate: "",
-    branchId: "",
-    search: "",
-  });
 
   const [printOptions, setPrintOptions] = useState<PrintOptions>({
     summary: true,
@@ -487,7 +450,7 @@ export default function SalesAnalyticsPage() {
     monthChart: true,
     modelTable: true,
     monthTable: true,
-    detailedTable: false,
+    detailedTable: true,
   });
 
   useEffect(() => {
@@ -504,7 +467,9 @@ export default function SalesAnalyticsPage() {
   }, [filters]);
 
   const exportUrl = useMemo(() => {
-    return `${API_BASE}/api/reports/sales/export${queryString ? `?${queryString}` : ""}`;
+    const params = new URLSearchParams(queryString);
+    params.set("includeDetails", "1");
+    return `${API_BASE}/api/reports/sales/export?${params.toString()}`;
   }, [queryString]);
 
   const activeBranches = useMemo(
@@ -513,7 +478,7 @@ export default function SalesAnalyticsPage() {
         .filter((b) => b.is_active !== 0)
         .map((b) => ({
           value: String(b.id),
-          label: b.branch_name || b.name || "Unknown",
+          label: b.name || b.branch_name || `Branch ${b.id}`,
         })),
     [branches]
   );
@@ -522,9 +487,6 @@ export default function SalesAnalyticsPage() {
     const found = activeBranches.find((b) => b.value === filters.branchId);
     return found?.label || "All Branches";
   }, [activeBranches, filters.branchId]);
-
-  const topModelWise = useMemo(() => modelWise.slice(0, 8), [modelWise]);
-  const topBranchWise = useMemo(() => branchWise.slice(0, 8), [branchWise]);
 
   const fetchBranches = async () => {
     try {
@@ -570,69 +532,29 @@ export default function SalesAnalyticsPage() {
 
       if (!res.ok) {
         const text = await res.text();
-        console.error("Sales analytics API error:", res.status, text);
-        throw new Error(`Sales analytics failed: ${res.status}`);
+        console.error("Sales report API error:", res.status, text);
+        throw new Error(`Sales report failed: ${res.status}`);
       }
 
       const data = await res.json();
       const payload = data?.data || data || {};
 
-      setRows(
-        Array.isArray(payload?.rows)
-          ? payload.rows
-          : Array.isArray(data?.rows)
-          ? data.rows
-          : []
-      );
-
       setSummary(
-        payload?.summary ||
-          data?.summary || {
-            total_sales: 0,
-            total_amount: 0,
-            total_ex_showroom: 0,
-            total_insurance: 0,
-            total_accessories: 0,
-          }
+        payload?.summary || {
+          total_sales: 0,
+          total_amount: 0,
+          total_ex_showroom: 0,
+          total_insurance: 0,
+          total_accessories: 0,
+        }
       );
-
-      setMtd(payload?.mtd || data?.mtd || { total_sales: 0, total_amount: 0 });
-      setYtd(payload?.ytd || data?.ytd || { total_sales: 0, total_amount: 0 });
-
-      setModelWise(
-        Array.isArray(payload?.modelWise)
-          ? payload.modelWise
-          : Array.isArray(data?.modelWise)
-          ? data.modelWise
-          : []
-      );
-
-      setBranchWise(
-        Array.isArray(payload?.branchWise)
-          ? payload.branchWise
-          : Array.isArray(data?.branchWise)
-          ? data.branchWise
-          : []
-      );
-
-      setDateWise(
-        Array.isArray(payload?.dateWise)
-          ? payload.dateWise
-          : Array.isArray(data?.dateWise)
-          ? data.dateWise
-          : []
-      );
-
-      setMonthWise(
-        Array.isArray(payload?.monthWise)
-          ? payload.monthWise
-          : Array.isArray(data?.monthWise)
-          ? data.monthWise
-          : []
-      );
+      setRows(Array.isArray(payload?.rows) ? payload.rows : []);
+      setModelWise(Array.isArray(payload?.modelWise) ? payload.modelWise : []);
+      setBranchWise(Array.isArray(payload?.branchWise) ? payload.branchWise : []);
+      setDateWise(Array.isArray(payload?.dateWise) ? payload.dateWise : []);
+      setMonthWise(Array.isArray(payload?.monthWise) ? payload.monthWise : []);
     } catch (error) {
-      console.error("Failed to load sales analytics", error);
-      setRows([]);
+      console.error("Failed to load sales report", error);
       setSummary({
         total_sales: 0,
         total_amount: 0,
@@ -640,8 +562,7 @@ export default function SalesAnalyticsPage() {
         total_insurance: 0,
         total_accessories: 0,
       });
-      setMtd({ total_sales: 0, total_amount: 0 });
-      setYtd({ total_sales: 0, total_amount: 0 });
+      setRows([]);
       setModelWise([]);
       setBranchWise([]);
       setDateWise([]);
@@ -666,9 +587,10 @@ export default function SalesAnalyticsPage() {
   };
 
   const handleReset = () => {
+    const resetDates = getDefaultDates("MTD");
     setFilters({
-      fromDate: "",
-      toDate: "",
+      fromDate: resetDates.fromDate,
+      toDate: resetDates.toDate,
       branchId: "",
       search: "",
     });
@@ -678,52 +600,48 @@ export default function SalesAnalyticsPage() {
     }, 0);
   };
 
- const setQuickRange = (type: "today" | "mtd" | "ytd" | "fy") => {
-  const today = new Date();
-  const todayStr = formatLocalDate(today);
-
-  if (type === "today") {
+  const applyPreset = (preset: "TODAY" | "MTD" | "YTD" | "CUSTOM") => {
+    if (preset === "CUSTOM") return;
+    const next = getDefaultDates(preset);
     setFilters((prev) => ({
       ...prev,
-      fromDate: todayStr,
-      toDate: todayStr,
+      fromDate: next.fromDate,
+      toDate: next.toDate,
     }));
-    return;
-  }
-
-  if (type === "mtd") {
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    setFilters((prev) => ({
-      ...prev,
-      fromDate: formatLocalDate(monthStart),
-      toDate: todayStr,
-    }));
-    return;
-  }
-
-  const fyStart = getFinancialYearStartLocal(today);
-
-  setFilters((prev) => ({
-    ...prev,
-    fromDate: formatLocalDate(fyStart),
-    toDate: todayStr,
-  }));
-};
-  const handlePrintConfirm = async () => {
-    setShowPrintOptions(false);
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    window.print();
   };
 
-  const printHide = (enabled: boolean) => (!enabled ? "print-hide-section" : "");
+  const handlePrintOpen = () => {
+    const includeDetailed = window.confirm("Do you want to print detailed sales report also?");
+    setPrintOptions((prev) => ({
+      ...prev,
+      detailedTable: includeDetailed,
+    }));
+    setShowPrintOptions(true);
+  };
+
+  const handlePrintConfirm = async () => {
+    setShowPrintOptions(false);
+    setPrinting(true);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    window.print();
+    setTimeout(() => setPrinting(false), 250);
+  };
+
+  const branchPieRows = branchWise.slice(0, 8);
+  const modelPieRows = modelWise.slice(0, 10);
+  const monthChartRows = monthWise.slice(0, 12);
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="report-container min-h-screen bg-slate-50">
       <style jsx global>{`
+        .print-only {
+          display: none;
+        }
+
         @media print {
           @page {
             size: A4 portrait;
-            margin: 9mm;
+            margin: 8mm;
           }
 
           html,
@@ -732,7 +650,6 @@ export default function SalesAnalyticsPage() {
             color: #111827 !important;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
-            font-size: 11px !important;
           }
 
           body * {
@@ -748,69 +665,66 @@ export default function SalesAnalyticsPage() {
             position: absolute !important;
             inset: 0 !important;
             width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
             background: #ffffff !important;
           }
 
           .no-print,
           aside,
-          nav {
+          nav,
+          button {
             display: none !important;
           }
 
-          .print-hide-section {
-            display: none !important;
+          .print-only {
+            display: block !important;
           }
 
           .print-report-wrap {
-            padding: 0 !important;
-            margin: 0 !important;
             max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
 
           .print-header {
             display: block !important;
-            margin-bottom: 8px !important;
+            margin-bottom: 10px !important;
             border: 1px solid #d1d5db !important;
-            border-left: 5px solid #dc2626 !important;
-            border-radius: 10px !important;
+            border-left: 5px solid #111827 !important;
+            border-radius: 12px !important;
             padding: 10px 12px !important;
-            break-inside: avoid !important;
           }
 
           .print-header-title {
             display: flex !important;
             justify-content: space-between !important;
-            align-items: flex-start !important;
-            gap: 12px !important;
-            margin-bottom: 8px !important;
+            gap: 16px !important;
+            align-items: start !important;
           }
 
-          .print-header-title h1 {
-            font-size: 20px !important;
+          .print-header h1 {
+            font-size: 18px !important;
             line-height: 1.1 !important;
             margin: 0 !important;
             font-weight: 800 !important;
-            color: #111827 !important;
           }
 
-          .print-header-title .brand {
+          .brand {
             font-size: 12px !important;
             font-weight: 700 !important;
-            color: #dc2626 !important;
+            color: #111827 !important;
             margin-bottom: 2px !important;
           }
 
           .print-subtitle {
-            font-size: 10px !important;
-            color: #4b5563 !important;
+            font-size: 9px !important;
+            color: #6b7280 !important;
           }
 
           .print-meta-grid {
             display: grid !important;
-            grid-template-columns: repeat(4, 1fr) !important;
+            grid-template-columns: repeat(5, 1fr) !important;
             gap: 6px !important;
+            margin-top: 8px !important;
           }
 
           .print-meta-item {
@@ -830,65 +744,33 @@ export default function SalesAnalyticsPage() {
           .print-meta-item .v {
             display: block !important;
             font-size: 10px !important;
-            color: #111827 !important;
             font-weight: 600 !important;
+            color: #111827 !important;
           }
 
           .summary-grid-print {
             display: grid !important;
-            grid-template-columns: repeat(3, 1fr) !important;
+            grid-template-columns: repeat(4, 1fr) !important;
             gap: 8px !important;
             margin-bottom: 8px !important;
-            break-inside: avoid !important;
           }
 
-          .stat-card {
-            border: 1px solid #d1d5db !important;
-            box-shadow: none !important;
-            border-radius: 10px !important;
-            padding: 8px 10px !important;
-            min-height: 92px !important;
-            break-inside: avoid !important;
-          }
-
-          .stat-label {
-            font-size: 9px !important;
-            line-height: 1.2 !important;
-            color: #6b7280 !important;
-          }
-
-          .stat-value {
-            font-size: 19px !important;
-            line-height: 1.08 !important;
-            margin-top: 4px !important;
-            word-break: break-word !important;
-          }
-
-          .stat-subvalue {
-            font-size: 9px !important;
-            margin-top: 2px !important;
-          }
-
-          .print-chart-grid {
+          .print-two-col {
             display: grid !important;
             grid-template-columns: 1fr 1fr !important;
             gap: 8px !important;
-            margin-bottom: 8px !important;
-            align-items: start !important;
-            break-inside: avoid !important;
           }
 
           .report-card {
-            border: 1px solid #d1d5db !important;
             box-shadow: none !important;
+            border: 1px solid #d1d5db !important;
             border-radius: 10px !important;
             break-inside: avoid !important;
+            page-break-inside: avoid !important;
           }
 
           .section-title {
-            padding: 8px 10px !important;
             font-size: 12px !important;
-            background: #f9fafb !important;
           }
 
           .section-body {
@@ -914,19 +796,16 @@ export default function SalesAnalyticsPage() {
             min-height: auto !important;
           }
 
-          .print-page-break {
-            page-break-before: always !important;
-            break-before: page !important;
-          }
-
           .compact-table table,
-          .detailed-sales-table table {
+          .screen-detailed-sales-table table,
+          .print-detailed-sales-table table {
             width: 100% !important;
             border-collapse: collapse !important;
           }
 
           .compact-table thead,
-          .detailed-sales-table thead {
+          .screen-detailed-sales-table thead,
+          .print-detailed-sales-table thead {
             display: table-header-group !important;
           }
 
@@ -940,8 +819,10 @@ export default function SalesAnalyticsPage() {
             word-break: break-word !important;
           }
 
-          .detailed-sales-table th,
-          .detailed-sales-table td {
+          .screen-detailed-sales-table th,
+          .screen-detailed-sales-table td,
+          .print-detailed-sales-table th,
+          .print-detailed-sales-table td {
             border: 1px solid #d1d5db !important;
             padding: 3px 5px !important;
             font-size: 8px !important;
@@ -951,18 +832,21 @@ export default function SalesAnalyticsPage() {
           }
 
           .compact-table th,
-          .detailed-sales-table th {
+          .screen-detailed-sales-table th,
+          .print-detailed-sales-table th {
             background: #f3f4f6 !important;
             font-weight: 700 !important;
           }
 
           .compact-table tr,
-          .detailed-sales-table tr {
+          .screen-detailed-sales-table tr,
+          .print-detailed-sales-table tr {
             page-break-inside: avoid !important;
             break-inside: avoid !important;
           }
 
-          .detailed-sales-table .hide-in-print {
+          .screen-detailed-sales-table .hide-in-print,
+          .print-detailed-sales-table .hide-in-print {
             display: none !important;
           }
 
@@ -972,6 +856,68 @@ export default function SalesAnalyticsPage() {
 
           .loading-text {
             display: none !important;
+          }
+
+          .hide-section-in-print {
+            display: none !important;
+          }
+
+          .print-page-break {
+            page-break-before: always !important;
+            break-before: page !important;
+          }
+
+          /* HIDE SCREEN DETAILED CARD IN PRINT */
+          .screen-detailed-wrapper {
+            display: none !important;
+          }
+
+          /* PRINT DETAILED TABLE MUST BE PAGE-BREAKABLE */
+          .print-detailed-wrapper {
+            display: block !important;
+            page-break-before: always !important;
+            break-before: page !important;
+          }
+
+          .print-detailed-card {
+            display: block !important;
+            box-shadow: none !important;
+            border: 1px solid #d1d5db !important;
+            border-radius: 10px !important;
+            overflow: visible !important;
+            break-inside: auto !important;
+            page-break-inside: auto !important;
+          }
+
+          .print-detailed-card .print-detailed-head {
+            padding: 10px 12px !important;
+            border-bottom: 1px solid #d1d5db !important;
+            background: #f8fafc !important;
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            color: #111827 !important;
+          }
+
+          .print-detailed-card .print-detailed-body {
+            padding: 10px !important;
+            overflow: visible !important;
+          }
+
+          .print-detailed-sales-table {
+            overflow: visible !important;
+          }
+
+          .print-detailed-sales-table table {
+            page-break-inside: auto !important;
+          }
+
+          .print-detailed-sales-table tbody {
+            display: table-row-group !important;
+          }
+
+          .print-detailed-sales-table tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
         }
       `}</style>
@@ -985,8 +931,8 @@ export default function SalesAnalyticsPage() {
       />
 
       <div className="sales-report-print-root">
-       <div className="w-full max-w-none p-4 md:p-6 print-report-wrap">
-          <div className="print-header hidden">
+        <div className="w-full max-w-none p-4 md:p-6 print-report-wrap">
+          <div className="print-header hidden print:block">
             <div className="print-header-title">
               <div>
                 <div className="brand">GUPTA AUTO AGENCY</div>
@@ -1017,171 +963,148 @@ export default function SalesAnalyticsPage() {
                 <span className="k">Search</span>
                 <span className="v">{filters.search || "-"}</span>
               </div>
+              <div className="print-meta-item">
+                <span className="k">Detailed Print</span>
+                <span className="v">{printOptions.detailedTable ? "Yes" : "No"}</span>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-4 screen-title">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <h1 className="text-3xl font-bold text-slate-900">
-                  Sales Analytics Report
-                </h1>
-                <p className="text-slate-600 mt-1">
-                  MTD, YTD, model-wise, date-wise, month-wise and chart analytics.
-                </p>
-              </div>
+          <div className="screen-title flex flex-col gap-4 md:flex-row md:items-start md:justify-between no-print">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900">Sales Report</h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Detailed retail analytics by date, branch and model.
+              </p>
+            </div>
 
-              <div className="flex gap-2 flex-wrap no-print">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handlePrintOpen}
+                className="inline-flex items-center rounded-xl bg-slate-800 text-white px-4 py-2.5 text-sm font-semibold shadow-sm hover:bg-slate-700"
+              >
+                {printing ? "Preparing..." : "Print"}
+              </button>
+              <ExportButton url={exportUrl} />
+            </div>
+          </div>
+
+          <div className="no-print rounded-xl border border-slate-300 bg-white shadow-sm p-4 mb-4">
+            <div className="flex flex-wrap gap-2 mb-4">
+              {(["TODAY", "MTD", "YTD", "CUSTOM"] as const).map((preset) => (
                 <button
-                  onClick={() => setShowPrintOptions(true)}
-                  className="inline-flex rounded-lg bg-slate-700 text-white px-4 py-2 text-sm font-medium"
+                  key={preset}
+                  onClick={() => applyPreset(preset)}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  Print
+                  {preset}
                 </button>
-                <ExportButton url={exportUrl} />
-              </div>
+              ))}
             </div>
 
-            <div className="flex flex-wrap gap-2 no-print">
-              <button
-                onClick={() => setQuickRange("today")}
-                className="rounded-lg border px-3 py-2 text-sm font-medium bg-white"
-              >
-                Today
-              </button>
-              <button
-                onClick={() => setQuickRange("mtd")}
-                className="rounded-lg border px-3 py-2 text-sm font-medium bg-white"
-              >
-                MTD
-              </button>
-              <button
-                onClick={() => setQuickRange("ytd")}
-                className="rounded-lg border px-3 py-2 text-sm font-medium bg-white"
-              >
-                YTD
-              </button>
-              <button
-                onClick={() => setQuickRange("fy")}
-                className="rounded-lg border px-3 py-2 text-sm font-medium bg-white"
-              >
-                This FY
-              </button>
-              <button
-                onClick={handleApply}
-                className="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm font-medium"
-              >
-                Refresh
-              </button>
-
-              <button
-                onClick={() => setShowDetailedTable((prev) => !prev)}
-                className="rounded-lg border px-4 py-2 text-sm font-medium bg-white"
-              >
-                {showDetailedTable ? "Hide Detailed Table" : "Show Detailed Table"}
-              </button>
-            </div>
-
-            <div className="no-print report-filters-wrap">
-              <ReportFilters
-                values={filters}
-                onChange={handleChange}
-                onApply={handleApply}
-                onReset={handleReset}
-                branchOptions={activeBranches}
-              />
-            </div>
+            <ReportFilters
+              values={filters}
+              onChange={handleChange}
+              onApply={handleApply}
+              onReset={handleReset}
+              branchOptions={activeBranches}
+            />
           </div>
 
-          {loading && (
-            <div className="loading-text text-sm text-slate-500 mb-3">
-              Loading report...
+          {loading ? (
+            <div className="rounded-xl border border-slate-300 bg-white shadow-sm p-6 text-center text-slate-500 loading-text">
+              Loading sales report...
             </div>
-          )}
+          ) : null}
 
-          <div className={`${printHide(printOptions.summary)}`}>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3 summary-grid-print items-stretch">
-              <StatCard label="Filtered Sales" value={summary.total_sales || 0} />
-              <StatCard
-                label="Filtered Amount"
-                value={formatAmount(summary.total_amount)}
-              />
-              <StatCard
-                label="MTD Sales"
-                value={mtd.total_sales || 0}
-                subValue={formatAmount(mtd.total_amount)}
-              />
-              <StatCard
-                label="YTD Sales"
-                value={ytd.total_sales || 0}
-                subValue={formatAmount(ytd.total_amount)}
-              />
-              <StatCard
-                label="Ex Showroom"
-                value={formatAmount(summary.total_ex_showroom)}
-              />
-              <StatCard
-                label="Accessories + Insurance"
-                value={formatAmount(
-                  Number(summary.total_insurance || 0) +
-                    Number(summary.total_accessories || 0)
-                )}
-              />
-            </div>
+          <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 summary-grid-print ${!printOptions.summary ? "hide-section-in-print" : ""}`}>
+            <StatCard
+              label="Total Sales"
+              value={summary.total_sales || 0}
+              subtitle={`${formatDateOnly(filters.fromDate)} to ${formatDateOnly(filters.toDate)}`}
+              accent="bg-blue-600"
+            />
+            <StatCard
+              label="Total Amount"
+              value={formatAmount(summary.total_amount)}
+              subtitle="Retail value"
+              accent="bg-emerald-600"
+            />
+            <StatCard
+              label="Ex-Showroom"
+              value={formatAmount(summary.total_ex_showroom)}
+              subtitle="Vehicle amount"
+              accent="bg-amber-500"
+            />
+            <StatCard
+              label="Insurance + Accessories"
+              value={formatAmount(
+                Number(summary.total_insurance || 0) + Number(summary.total_accessories || 0)
+              )}
+              subtitle={`Insurance ${formatAmount(summary.total_insurance)} | Accessories ${formatAmount(summary.total_accessories)}`}
+              accent="bg-violet-600"
+            />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-chart-grid items-start">
-            <div className={printHide(printOptions.branchPie)}>
-              <SectionCard title="Branch Share Pie Chart">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-two-col mt-4">
+            <div className={!printOptions.branchPie ? "hide-section-in-print" : ""}>
+              <SectionCard title="Branch-wise Sales Share">
                 <SimplePieChart
-                  data={topBranchWise}
+                  title="Sales count by branch"
+                  rows={branchPieRows}
                   labelKey="branch_name"
                   valueKey="retail_count"
-                  title="Branch-wise Retail Share"
                 />
               </SectionCard>
             </div>
 
-            <div className={printHide(printOptions.modelPie)}>
-              <SectionCard title="Model Share Pie Chart">
+            <div className={!printOptions.modelPie ? "hide-section-in-print" : ""}>
+              <SectionCard title="Model-wise Sales Share">
                 <SimplePieChart
-                  data={topModelWise}
+                  title="Sales count by model"
+                  rows={modelPieRows}
                   labelKey="vehicle_model"
                   valueKey="retail_count"
-                  title="Model-wise Retail Share"
                 />
               </SectionCard>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-chart-grid items-start">
-            <div className={printHide(printOptions.dateChart)}>
-              <SectionCard title="Date-wise Retail Chart">
-                <SimpleBarChart
-                  data={dateWise}
-                  labelKey="day_no"
-                  valueKey="retail_count"
-                  title="Date Number Wise Retail Count"
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-two-col mt-4">
+            <div className={!printOptions.dateChart ? "hide-section-in-print" : ""}>
+              <SectionCard title="Date-wise Sales Trend">
+                <HorizontalBars
+                  title="Retail count by date"
+                  rows={dateWise.map((r) => ({
+                    label: `Day ${r.day_no}`,
+                    value: r.retail_count,
+                  }))}
+                  labelKey="label"
+                  valueKey="value"
+                  colorClass="bg-blue-600"
                 />
               </SectionCard>
             </div>
 
-            <div className={printHide(printOptions.monthChart)}>
-              <SectionCard title="Month-wise Retail Chart" className="compact-month-chart">
-                <SimpleBarChart
-                  data={monthWise}
-                  labelKey="month_label"
-                  valueKey="retail_count"
-                  title="Month-wise Retail Count"
-                  compact
+            <div className={!printOptions.monthChart ? "hide-section-in-print" : ""}>
+              <SectionCard title="Month-wise Sales Trend" className="compact-month-chart">
+                <HorizontalBars
+                  title="Retail count by month"
+                  rows={monthChartRows.map((r) => ({
+                    label: r.month_label,
+                    value: r.retail_count,
+                  }))}
+                  labelKey="label"
+                  valueKey="value"
+                  colorClass="bg-emerald-600"
                 />
               </SectionCard>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-page-break items-start">
-            <div className={printHide(printOptions.modelTable)}>
-              <SectionCard title="Model-wise Sales Table" className="compact-table">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-two-col mt-4">
+            <div className={!printOptions.modelTable ? "hide-section-in-print" : ""}>
+              <SectionCard title="Model-wise Summary" className="compact-table">
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead className="bg-slate-100">
@@ -1195,21 +1118,19 @@ export default function SalesAnalyticsPage() {
                     <tbody>
                       {modelWise.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
-                            No model-wise records found
+                          <td colSpan={4} className="px-3 py-8 text-center text-slate-500">
+                            No model summary found
                           </td>
                         </tr>
                       ) : (
                         modelWise.map((row, index) => (
                           <tr key={index} className="border-t border-slate-200">
-                            <td className="px-3 py-2">{row.vehicle_model || "Unknown"}</td>
-                            <td className="px-3 py-2 text-right">{row.retail_count}</td>
-                            <td className="px-3 py-2 text-right">
-                              {formatAmount(row.total_amount)}
+                            <td className="px-3 py-2 font-medium text-slate-800">
+                              {row.vehicle_model || "-"}
                             </td>
-                            <td className="px-3 py-2 text-right">
-                              {formatAmount(row.avg_amount)}
-                            </td>
+                            <td className="px-3 py-2 text-right">{row.retail_count || 0}</td>
+                            <td className="px-3 py-2 text-right">{formatAmount(row.total_amount)}</td>
+                            <td className="px-3 py-2 text-right">{formatAmount(row.avg_amount)}</td>
                           </tr>
                         ))
                       )}
@@ -1219,8 +1140,8 @@ export default function SalesAnalyticsPage() {
               </SectionCard>
             </div>
 
-            <div className={printHide(printOptions.monthTable)}>
-              <SectionCard title="Month-wise Sales Table" className="compact-table">
+            <div className={!printOptions.monthTable ? "hide-section-in-print" : ""}>
+              <SectionCard title="Month-wise Summary" className="compact-table">
                 <div className="overflow-auto">
                   <table className="min-w-full text-sm">
                     <thead className="bg-slate-100">
@@ -1233,18 +1154,18 @@ export default function SalesAnalyticsPage() {
                     <tbody>
                       {monthWise.length === 0 ? (
                         <tr>
-                          <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
-                            No month-wise records found
+                          <td colSpan={3} className="px-3 py-8 text-center text-slate-500">
+                            No month summary found
                           </td>
                         </tr>
                       ) : (
                         monthWise.map((row, index) => (
                           <tr key={index} className="border-t border-slate-200">
-                            <td className="px-3 py-2">{row.month_label}</td>
-                            <td className="px-3 py-2 text-right">{row.retail_count}</td>
-                            <td className="px-3 py-2 text-right">
-                              {formatAmount(row.total_amount)}
+                            <td className="px-3 py-2 font-medium text-slate-800">
+                              {row.month_label || "-"}
                             </td>
+                            <td className="px-3 py-2 text-right">{row.retail_count || 0}</td>
+                            <td className="px-3 py-2 text-right">{formatAmount(row.total_amount)}</td>
                           </tr>
                         ))
                       )}
@@ -1255,62 +1176,116 @@ export default function SalesAnalyticsPage() {
             </div>
           </div>
 
-          {(showDetailedTable || printOptions.detailedTable) && (
-            <div className={printHide(printOptions.detailedTable)}>
-              <SectionCard title="Detailed Sales Table" className="detailed-sales-table mt-4">
-                <div className="overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-100 sticky top-0 z-10">
+          {/* SCREEN DETAILED TABLE */}
+          <div
+            className={`screen-detailed-wrapper ${
+              !printOptions.detailedTable ? "hide-section-in-print" : ""
+            }`}
+          >
+            <SectionCard title="Detailed Sales Table" className="screen-detailed-sales-table mt-4">
+              <div className="overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-100 sticky top-0 z-10">
+                    <tr>
+                      <th className="text-left px-3 py-2">ID</th>
+                      <th className="text-left px-3 py-2">Date</th>
+                      <th className="text-left px-3 py-2">Invoice</th>
+                      <th className="text-left px-3 py-2">Customer</th>
+                      <th className="text-left px-3 py-2">Mobile</th>
+                      <th className="text-left px-3 py-2">Branch</th>
+                      <th className="text-left px-3 py-2">Vehicle</th>
+                      <th className="text-left px-3 py-2">Chassis</th>
+                      <th className="text-left px-3 py-2">Engine</th>
+                      <th className="text-right px-3 py-2">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 ? (
                       <tr>
-                        <th className="text-left px-3 py-2">ID</th>
-                        <th className="text-left px-3 py-2">Date</th>
-                        <th className="text-left px-3 py-2">Invoice</th>
-                        <th className="text-left px-3 py-2">Customer</th>
-                        <th className="text-left px-3 py-2">Mobile</th>
-                        <th className="text-left px-3 py-2">Branch</th>
-                        <th className="text-left px-3 py-2">Vehicle</th>
-                        <th className="text-left px-3 py-2 hide-in-print">Chassis</th>
-                        <th className="text-left px-3 py-2 hide-in-print">Engine</th>
-                        <th className="text-right px-3 py-2">Amount</th>
+                        <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                          No detailed sales records found
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {rows.length === 0 ? (
-                        <tr>
-                          <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
-                            No detailed sales records found
-                          </td>
+                    ) : (
+                      rows.map((row) => (
+                        <tr key={row.id} className="border-t border-slate-200">
+                          <td className="px-3 py-2">{row.id}</td>
+                          <td className="px-3 py-2">{row.sale_date ? String(row.sale_date).slice(0, 10) : "-"}</td>
+                          <td className="px-3 py-2">{row.invoice_number || "-"}</td>
+                          <td className="px-3 py-2">{row.customer_name || "-"}</td>
+                          <td className="px-3 py-2">{row.mobile_number || "-"}</td>
+                          <td className="px-3 py-2">{row.branch_name || "-"}</td>
+                          <td className="px-3 py-2 font-medium text-slate-800">{row.vehicle_model || "-"}</td>
+                          <td className="px-3 py-2">{row.chassis_number || "-"}</td>
+                          <td className="px-3 py-2">{row.engine_number || "-"}</td>
+                          <td className="px-3 py-2 text-right font-semibold">{formatAmount(row.sale_price)}</td>
                         </tr>
-                      ) : (
-                        rows.map((row) => (
-                          <tr key={row.id} className="border-t border-slate-200">
-                            <td className="px-3 py-2">{row.id}</td>
-                            <td className="px-3 py-2">
-                              {row.sale_date ? String(row.sale_date).slice(0, 10) : "-"}
-                            </td>
-                            <td className="px-3 py-2">{row.invoice_number || "-"}</td>
-                            <td className="px-3 py-2">{row.customer_name || "-"}</td>
-                            <td className="px-3 py-2">{row.mobile_number || "-"}</td>
-                            <td className="px-3 py-2">{row.branch_name || "-"}</td>
-                            <td className="px-3 py-2">{row.vehicle_model || "-"}</td>
-                            <td className="px-3 py-2 hide-in-print">
-                              {row.chassis_number || "-"}
-                            </td>
-                            <td className="px-3 py-2 hide-in-print">
-                              {row.engine_number || "-"}
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              {formatAmount(row.sale_price)}
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+          </div>
+
+          {/* PRINT-ONLY DETAILED TABLE */}
+          {printOptions.detailedTable ? (
+            <div className="print-only print-detailed-wrapper">
+              <div className="print-detailed-card">
+                <div className="print-detailed-head">Detailed Sales Table</div>
+                <div className="print-detailed-body">
+                  <div className="print-detailed-sales-table">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr>
+                          <th className="text-left px-3 py-2">ID</th>
+                          <th className="text-left px-3 py-2">Date</th>
+                          <th className="text-left px-3 py-2">Invoice</th>
+                          <th className="text-left px-3 py-2">Customer</th>
+                          <th className="text-left px-3 py-2">Mobile</th>
+                          <th className="text-left px-3 py-2">Branch</th>
+                          <th className="text-left px-3 py-2">Vehicle</th>
+                          <th className="text-left px-3 py-2 hide-in-print">Chassis</th>
+                          <th className="text-left px-3 py-2 hide-in-print">Engine</th>
+                          <th className="text-right px-3 py-2">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.length === 0 ? (
+                          <tr>
+                            <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                              No detailed sales records found
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        ) : (
+                          rows.map((row) => (
+                            <tr key={`print-${row.id}`} className="border-t border-slate-200">
+                              <td className="px-3 py-2">{row.id}</td>
+                              <td className="px-3 py-2">
+                                {row.sale_date ? String(row.sale_date).slice(0, 10) : "-"}
+                              </td>
+                              <td className="px-3 py-2">{row.invoice_number || "-"}</td>
+                              <td className="px-3 py-2">{row.customer_name || "-"}</td>
+                              <td className="px-3 py-2">{row.mobile_number || "-"}</td>
+                              <td className="px-3 py-2">{row.branch_name || "-"}</td>
+                              <td className="px-3 py-2 font-medium text-slate-800">
+                                {row.vehicle_model || "-"}
+                              </td>
+                              <td className="px-3 py-2 hide-in-print">{row.chassis_number || "-"}</td>
+                              <td className="px-3 py-2 hide-in-print">{row.engine_number || "-"}</td>
+                              <td className="px-3 py-2 text-right font-semibold">
+                                {formatAmount(row.sale_price)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </SectionCard>
+              </div>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
