@@ -35,6 +35,12 @@ router.get(
 );
 
 router.get(
+  "/stock/odrc/comparison",
+  authMiddleware,
+  reportsController.getStockOdrcComparisonReport
+);
+
+router.get(
   "/stock/odrc/export",
   authMiddleware,
   reportsController.exportStockOdrcReport

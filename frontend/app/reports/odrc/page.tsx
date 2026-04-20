@@ -35,6 +35,7 @@ type ModelWiseRow = {
 };
 
 type SnapshotMode = "today" | "mtd" | "ytd";
+type ComparisonMode = "mtd" | "ytd";
 
 type PurchaseSaleSnapshot = {
   purchaseCount: number;
@@ -52,6 +53,10 @@ function formatLocalDate(date: Date) {
 function getFinancialYearStartLocal(date: Date) {
   const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
   return new Date(year, 3, 1);
+}
+
+function getMonthStartLocal(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
 function formatDateOnly(value?: string | null) {
@@ -329,7 +334,7 @@ function getDateWindow(mode: SnapshotMode) {
   }
 
   if (mode === "mtd") {
-    const from = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
+    const from = formatLocalDate(getMonthStartLocal(today));
     return { from, to: end, label: "MTD" };
   }
 
@@ -340,10 +345,12 @@ function getDateWindow(mode: SnapshotMode) {
 export default function OdrcReportPage() {
   const [loading, setLoading] = useState(false);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [generatedAt, setGeneratedAt] = useState("");
   const [snapshotMode, setSnapshotMode] = useState<SnapshotMode>("today");
+  const [comparisonMode, setComparisonMode] = useState<ComparisonMode>("mtd");
 
   const [summary, setSummary] = useState<Summary>({
     opening_stock: 0,
@@ -361,8 +368,16 @@ export default function OdrcReportPage() {
     saleAmount: 0,
   });
 
+  const [periodModelWise, setPeriodModelWise] = useState<ModelWiseRow[]>([]);
+  const [dateModelWise, setDateModelWise] = useState<ModelWiseRow[]>([]);
+  const [comparisonRange, setComparisonRange] = useState({
+    label: "MTD",
+    fromDate: formatLocalDate(getMonthStartLocal(new Date())),
+    toDate: formatLocalDate(new Date()),
+  });
+
   const [filters, setFilters] = useState({
- reportDate: formatLocalDate(new Date()),
+    reportDate: formatLocalDate(new Date()),
     branchId: "",
     search: "",
   });
@@ -535,9 +550,72 @@ export default function OdrcReportPage() {
     }
   };
 
+  const fetchComparison = async () => {
+    try {
+      setComparisonLoading(true);
+
+      const params = new URLSearchParams();
+      if (filters.reportDate) params.set("reportDate", filters.reportDate);
+      if (filters.branchId) params.set("branchId", filters.branchId);
+      if (filters.search) params.set("search", filters.search);
+      params.set("compareMode", comparisonMode);
+
+      const res = await fetch(
+        `${API_BASE}/api/reports/stock/odrc/comparison?${params.toString()}`,
+        {
+          headers: getAuthHeaders(),
+        }
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("ODRC comparison API error:", res.status, text);
+        throw new Error(`ODRC comparison failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      const payload = data?.data || data || {};
+
+      setPeriodModelWise(
+        Array.isArray(payload?.periodWise)
+          ? payload.periodWise
+          : Array.isArray(data?.periodWise)
+          ? data.periodWise
+          : []
+      );
+
+      setDateModelWise(
+        Array.isArray(payload?.dateWise)
+          ? payload.dateWise
+          : Array.isArray(data?.dateWise)
+          ? data.dateWise
+          : []
+      );
+
+      setComparisonRange({
+        label: payload?.comparison?.label || (comparisonMode === "ytd" ? "YTD / FY" : "MTD"),
+        fromDate:
+          payload?.comparison?.fromDate ||
+          (comparisonMode === "ytd"
+            ? formatLocalDate(getFinancialYearStartLocal(new Date(filters.reportDate)))
+            : formatLocalDate(
+                getMonthStartLocal(new Date(filters.reportDate))
+              )),
+        toDate: payload?.comparison?.toDate || filters.reportDate,
+      });
+    } catch (error) {
+      console.error("Failed to load ODRC comparison report", error);
+      setPeriodModelWise([]);
+      setDateModelWise([]);
+    } finally {
+      setComparisonLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchBranches();
     fetchReport();
+    fetchComparison();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -546,22 +624,29 @@ export default function OdrcReportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshotMode, filters.search]);
 
+  useEffect(() => {
+    fetchComparison();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comparisonMode]);
+
   const handleChange = (field: string, value: string) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleApply = () => {
     fetchReport();
+    fetchComparison();
   };
 
   const handleReset = () => {
     setFilters({
-     reportDate: formatLocalDate(new Date()),
+      reportDate: formatLocalDate(new Date()),
       branchId: "",
       search: "",
     });
 
     setSnapshotMode("today");
+    setComparisonMode("mtd");
 
     setTimeout(() => {
       window.location.href = "/reports/odrc";
@@ -592,6 +677,63 @@ export default function OdrcReportPage() {
     }));
 
   const snapshotNet = Number(snapshot.purchaseCount || 0) - Number(snapshot.saleCount || 0);
+
+  const renderModelWiseTable = (rows: ModelWiseRow[], emptyText: string) => (
+    <div className="overflow-auto">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-100">
+          <tr>
+            <th className="text-left px-3 py-2">Model / Variant</th>
+            <th className="text-right px-3 py-2">O</th>
+            <th className="text-right px-3 py-2">D</th>
+            <th className="text-right px-3 py-2">R</th>
+            <th className="text-right px-3 py-2">C</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                {comparisonLoading ? "Loading..." : emptyText}
+              </td>
+            </tr>
+          ) : (
+            <>
+              {rows.map((row, index) => (
+                <tr key={`${row.model_label}-${index}`} className="border-t border-slate-200">
+                  <td className="px-3 py-2 font-medium text-slate-800">
+                    {row.model_label || "-"}
+                  </td>
+                  <td className="px-3 py-2 text-right">{row.opening_stock || 0}</td>
+                  <td className="px-3 py-2 text-right">{row.dispatch_count || 0}</td>
+                  <td className="px-3 py-2 text-right">{row.retail_count || 0}</td>
+                  <td className="px-3 py-2 text-right font-semibold">
+                    {row.closing_stock || 0}
+                  </td>
+                </tr>
+              ))}
+
+              <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
+                <td className="px-3 py-2 text-slate-900">TOTAL</td>
+                <td className="px-3 py-2 text-right">
+                  {rows.reduce((sum, row) => sum + Number(row.opening_stock || 0), 0)}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {rows.reduce((sum, row) => sum + Number(row.dispatch_count || 0), 0)}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {rows.reduce((sum, row) => sum + Number(row.retail_count || 0), 0)}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {rows.reduce((sum, row) => sum + Number(row.closing_stock || 0), 0)}
+                </td>
+              </tr>
+            </>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
 
   return (
     <div className="report-container min-h-screen bg-slate-50">
@@ -665,7 +807,7 @@ export default function OdrcReportPage() {
 
           .print-header .meta {
             display: grid !important;
-            grid-template-columns: repeat(4, 1fr) !important;
+            grid-template-columns: repeat(5, 1fr) !important;
             gap: 6px !important;
             margin-top: 8px !important;
           }
@@ -789,7 +931,7 @@ export default function OdrcReportPage() {
       `}</style>
 
       <div className="odrc-report-print-root">
-       <div className="w-full max-w-none p-4 md:p-6 space-y-4 print-report-wrap">
+        <div className="w-full max-w-none p-4 md:p-6 space-y-4 print-report-wrap">
           <div className="print-header hidden print:block">
             <div className="brand">GUPTA AUTO AGENCY</div>
             <h1>ODRC Report</h1>
@@ -805,6 +947,10 @@ export default function OdrcReportPage() {
               <div className="meta-item">
                 <span className="meta-k">Snapshot</span>
                 <span className="meta-v">{snapshotWindow.label}</span>
+              </div>
+              <div className="meta-item">
+                <span className="meta-k">Compare</span>
+                <span className="meta-v">{comparisonRange.label}</span>
               </div>
               <div className="meta-item">
                 <span className="meta-k">Generated</span>
@@ -904,31 +1050,27 @@ export default function OdrcReportPage() {
               label="Opening Stock"
               value={summary.opening_stock || 0}
               accent="bg-blue-600"
-              subtitle="Opening count for selected date"
             />
             <StatCard
               label="Dispatch"
               value={summary.dispatch_count || 0}
               accent="bg-amber-500"
-              subtitle="Vehicles dispatched"
             />
             <StatCard
               label="Retail"
               value={summary.retail_count || 0}
               accent="bg-emerald-600"
-              subtitle="Vehicles retailed"
             />
             <StatCard
               label="Closing Stock"
               value={summary.closing_stock || 0}
-              accent="bg-rose-600"
-              subtitle="Net closing stock"
+              accent="bg-slate-700"
             />
           </div>
 
           <SectionCard
-            title="Purchase vs Sale Snapshot"
-            subtitle={`Current snapshot mode: ${snapshotWindow.label}`}
+            title="Purchase vs Sales Snapshot"
+            subtitle={`${snapshotWindow.label} operational movement overview`}
           >
             <div className="flex flex-wrap gap-2 mb-4 no-print">
               <button
@@ -959,147 +1101,145 @@ export default function OdrcReportPage() {
                     : "border border-slate-300 bg-white text-slate-700"
                 }`}
               >
-                YTD
+                YTD / FY
               </button>
             </div>
 
-            {snapshotLoading ? (
-              <div className="rounded-xl bg-slate-50 px-4 py-8 text-center text-slate-500">
-                Loading snapshot...
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 snapshot-grid-print">
-                <StatCard
-                  label={`${snapshotWindow.label} Purchases`}
-                  value={snapshot.purchaseCount}
-                  accent="bg-cyan-600"
-                  subtitle={`${formatDateOnly(snapshotWindow.from)} to ${formatDateOnly(snapshotWindow.to)}`}
-                />
-                <StatCard
-                  label={`${snapshotWindow.label} Sales`}
-                  value={snapshot.saleCount}
-                  accent="bg-emerald-600"
-                  subtitle="Sales count from analytics"
-                />
-                <StatCard
-                  label={`${snapshotWindow.label} Sales Amount`}
-                  value={formatAmount(snapshot.saleAmount)}
-                  accent="bg-violet-600"
-                  subtitle="Total sales value"
-                />
-                <StatCard
-                  label={`${snapshotWindow.label} Net Units`}
-                  value={snapshotNet}
-                  accent={snapshotNet >= 0 ? "bg-blue-600" : "bg-rose-600"}
-                  subtitle="Purchases minus Sales"
-                />
-              </div>
-            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 snapshot-grid-print">
+              <StatCard
+                label={`${snapshotWindow.label} Purchases`}
+                value={snapshotLoading ? "..." : snapshot.purchaseCount}
+                accent="bg-blue-600"
+                subtitle={`${formatDateOnly(snapshotWindow.from)} to ${formatDateOnly(snapshotWindow.to)}`}
+              />
+              <StatCard
+                label={`${snapshotWindow.label} Sales`}
+                value={snapshotLoading ? "..." : snapshot.saleCount}
+                accent="bg-emerald-600"
+                subtitle="Retail count"
+              />
+              <StatCard
+                label={`${snapshotWindow.label} Sales Amount`}
+                value={snapshotLoading ? "..." : formatAmount(snapshot.saleAmount)}
+                accent="bg-violet-600"
+                subtitle="Retail value"
+              />
+              <StatCard
+                label="Net Units"
+                value={snapshotLoading ? "..." : snapshotNet}
+                accent="bg-amber-500"
+                subtitle="Purchases minus sales"
+              />
+            </div>
           </SectionCard>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-two-col">
-            <SectionCard
-              title="ODRC Summary Pie Chart"
-              subtitle="Opening, Dispatch, Retail and Closing split"
-            >
-              <SimplePieChart data={summaryPieData} title="ODRC Split" />
+            <SectionCard title="Summary Share" subtitle="ODRC distribution overview">
+              <SimplePieChart data={summaryPieData} title="Opening / Dispatch / Retail / Closing" />
             </SectionCard>
 
-            <SectionCard
-              title="Top Closing Stock Models"
-              subtitle="Highest closing stock models"
-            >
-              <SimpleBarChart data={topModelClosing} title="Closing Stock by Model" />
+            <SectionCard title="Top Closing Models" subtitle="Highest closing stock by model">
+              <SimpleBarChart data={topModelClosing} title="Top 8 model-wise closing stock" />
             </SectionCard>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-two-col">
-            <SectionCard
-              title="Branch-wise ODRC"
-              subtitle="Operational split by branch"
-              className="compact-table"
-            >
-              <div className="overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-100">
+          <SectionCard
+            title="Branch-wise ODRC"
+            subtitle="Operational split by branch"
+            className="compact-table"
+          >
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100">
+                  <tr>
+                    <th className="text-left px-3 py-2">Branch</th>
+                    <th className="text-right px-3 py-2">Opening</th>
+                    <th className="text-right px-3 py-2">Dispatch</th>
+                    <th className="text-right px-3 py-2">Retail</th>
+                    <th className="text-right px-3 py-2">Closing</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branchWise.length === 0 ? (
                     <tr>
-                      <th className="text-left px-3 py-2">Branch</th>
-                      <th className="text-right px-3 py-2">Opening</th>
-                      <th className="text-right px-3 py-2">Dispatch</th>
-                      <th className="text-right px-3 py-2">Retail</th>
-                      <th className="text-right px-3 py-2">Closing</th>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        {loading ? "Loading..." : "No branch records found"}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {branchWise.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                          {loading ? "Loading..." : "No branch records found"}
+                  ) : (
+                    branchWise.map((row, index) => (
+                      <tr key={index} className="border-t border-slate-200">
+                        <td className="px-3 py-2 font-medium text-slate-800">
+                          {row.branch_name || "-"}
+                        </td>
+                        <td className="px-3 py-2 text-right">{row.opening_stock || 0}</td>
+                        <td className="px-3 py-2 text-right">{row.dispatch_count || 0}</td>
+                        <td className="px-3 py-2 text-right">{row.retail_count || 0}</td>
+                        <td className="px-3 py-2 text-right font-semibold">
+                          {row.closing_stock || 0}
                         </td>
                       </tr>
-                    ) : (
-                      branchWise.map((row, index) => (
-                        <tr key={index} className="border-t border-slate-200">
-                          <td className="px-3 py-2 font-medium text-slate-800">
-                            {row.branch_name || "-"}
-                          </td>
-                          <td className="px-3 py-2 text-right">{row.opening_stock || 0}</td>
-                          <td className="px-3 py-2 text-right">{row.dispatch_count || 0}</td>
-                          <td className="px-3 py-2 text-right">{row.retail_count || 0}</td>
-                          <td className="px-3 py-2 text-right font-semibold">
-                            {row.closing_stock || 0}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </SectionCard>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
 
-            <SectionCard
-              title="Model-wise ODRC"
-              subtitle="Operational split by model"
-              className="compact-table"
-            >
-              <div className="overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-100">
-                    <tr>
-                      <th className="text-left px-3 py-2">Model</th>
-                      <th className="text-right px-3 py-2">Opening</th>
-                      <th className="text-right px-3 py-2">Dispatch</th>
-                      <th className="text-right px-3 py-2">Retail</th>
-                      <th className="text-right px-3 py-2">Closing</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {modelWise.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                          {loading ? "Loading..." : "No model records found"}
-                        </td>
-                      </tr>
-                    ) : (
-                      modelWise.map((row, index) => (
-                        <tr key={index} className="border-t border-slate-200">
-                          <td className="px-3 py-2 font-medium text-slate-800">
-                            {row.model_label || "-"}
-                          </td>
-                          <td className="px-3 py-2 text-right">{row.opening_stock || 0}</td>
-                          <td className="px-3 py-2 text-right">{row.dispatch_count || 0}</td>
-                          <td className="px-3 py-2 text-right">{row.retail_count || 0}</td>
-                          <td className="px-3 py-2 text-right font-semibold">
-                            {row.closing_stock || 0}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+          <SectionCard
+            title="Model-wise ODRC Comparison"
+            subtitle="Period vs selected date comparison"
+            className="compact-table"
+          >
+            <div className="flex flex-wrap gap-2 mb-4 no-print">
+              <button
+                onClick={() => setComparisonMode("mtd")}
+                className={`rounded-xl px-4 py-2.5 text-sm font-semibold ${
+                  comparisonMode === "mtd"
+                    ? "bg-slate-900 text-white"
+                    : "border border-slate-300 bg-white text-slate-700"
+                }`}
+              >
+                MTD
+              </button>
+              <button
+                onClick={() => setComparisonMode("ytd")}
+                className={`rounded-xl px-4 py-2.5 text-sm font-semibold ${
+                  comparisonMode === "ytd"
+                    ? "bg-slate-900 text-white"
+                    : "border border-slate-300 bg-white text-slate-700"
+                }`}
+              >
+                YTD / FY
+              </button>
+              <button
+                onClick={fetchComparison}
+                className="rounded-xl border border-slate-300 bg-white text-slate-700 px-4 py-2.5 text-sm font-semibold hover:bg-slate-50"
+              >
+                Refresh Comparison
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 print-two-col">
+              <div>
+                <div className="mb-2 text-sm font-semibold text-slate-700">
+                  {comparisonRange.label} ({formatDateOnly(comparisonRange.fromDate)} to{" "}
+                  {formatDateOnly(comparisonRange.toDate)})
+                </div>
+                {renderModelWiseTable(
+                  periodModelWise,
+                  `No ${comparisonRange.label} model records found`
+                )}
               </div>
-            </SectionCard>
-          </div>
+
+              <div>
+                <div className="mb-2 text-sm font-semibold text-slate-700">
+                  DATE ({formatDateOnly(filters.reportDate)})
+                </div>
+                {renderModelWiseTable(dateModelWise, "No date-wise model records found")}
+              </div>
+            </div>
+          </SectionCard>
         </div>
       </div>
     </div>

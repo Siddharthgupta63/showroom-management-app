@@ -840,6 +840,118 @@ exports.exportStockReport = async (req, res) => {
 // --------------------------------------------------
 // ODRC REPORT
 // --------------------------------------------------
+
+function buildOdrcSearchWhere(branchId, search) {
+  let where = ` WHERE 1 = 1 `;
+  const params = [];
+
+  if (branchId) {
+    where += ` AND vpi.current_branch_id = ? `;
+    params.push(branchId);
+  }
+
+  if (search) {
+    where += ` AND (
+      COALESCE(vpi.chassis_number, '') LIKE ?
+      OR COALESCE(vpi.engine_number, '') LIKE ?
+      OR COALESCE(vm.model_name, '') LIKE ?
+      OR COALESCE(vv.variant_name, '') LIKE ?
+      OR COALESCE(s.customer_name, '') LIKE ?
+      OR COALESCE(s.mobile_number, '') LIKE ?
+    ) `;
+    const q = applyLike(search);
+    params.push(q, q, q, q, q, q);
+  }
+
+  return { where, params };
+}
+
+async function getOdrcModelWiseRange({ fromDate, toDate, branchId, search }) {
+  const { where, params } = buildOdrcSearchWhere(branchId, search);
+
+  const [rows] = await db.query(
+    `
+    SELECT
+      CONCAT_WS(' / ', vm.model_name, vv.variant_name) AS model_label,
+
+      SUM(
+        CASE
+          WHEN DATE(${STOCK_DATE_EXPR}) < ? THEN 1
+          ELSE 0
+        END
+      )
+      -
+      SUM(
+        CASE
+          WHEN vpi.sale_id IS NOT NULL AND DATE(s.sale_date) < ? THEN 1
+          ELSE 0
+        END
+      ) AS opening_stock,
+
+      SUM(
+        CASE
+          WHEN DATE(${STOCK_DATE_EXPR}) >= ? AND DATE(${STOCK_DATE_EXPR}) <= ? THEN 1
+          ELSE 0
+        END
+      ) AS dispatch_count,
+
+      SUM(
+        CASE
+          WHEN vpi.sale_id IS NOT NULL
+           AND DATE(s.sale_date) >= ?
+           AND DATE(s.sale_date) <= ? THEN 1
+          ELSE 0
+        END
+      ) AS retail_count,
+
+      SUM(
+        CASE
+          WHEN DATE(${STOCK_DATE_EXPR}) <= ? THEN 1
+          ELSE 0
+        END
+      )
+      -
+      SUM(
+        CASE
+          WHEN vpi.sale_id IS NOT NULL AND DATE(s.sale_date) <= ? THEN 1
+          ELSE 0
+        END
+      ) AS closing_stock
+
+    FROM vehicle_purchase_items vpi
+    LEFT JOIN vehicle_models vm ON vm.id = vpi.model_id
+    LEFT JOIN vehicle_variants vv ON vv.id = vpi.variant_id
+    LEFT JOIN sales s ON s.id = vpi.sale_id
+    ${where}
+    GROUP BY vm.model_name, vv.variant_name
+    HAVING model_label IS NOT NULL AND model_label <> ''
+    ORDER BY
+      CASE WHEN COALESCE(vm.model_name, '') = '' THEN 1 ELSE 0 END,
+      vm.model_name,
+      vv.variant_name
+    `,
+    [
+      fromDate,
+      fromDate,
+      fromDate,
+      toDate,
+      fromDate,
+      toDate,
+      toDate,
+      toDate,
+      ...params,
+    ]
+  );
+
+  return (rows || []).map((row) => ({
+    ...row,
+    opening_stock: Number(row.opening_stock || 0),
+    dispatch_count: Number(row.dispatch_count || 0),
+    retail_count: Number(row.retail_count || 0),
+    closing_stock: Number(row.closing_stock || 0),
+  }));
+}
+
 exports.getStockOdrcReport = async (req, res) => {
   try {
     const reportDate =
@@ -1134,6 +1246,63 @@ exports.getStockOdrcReport = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch ODRC report",
+      error: error.message,
+    });
+  }
+};
+
+exports.getStockOdrcComparisonReport = async (req, res) => {
+  try {
+    const reportDate =
+      safeDateString(req.query.reportDate) || safeDateString(new Date());
+    const branchId = normalizeString(req.query.branchId);
+    const search = normalizeString(req.query.search);
+    const compareMode = normalizeString(req.query.compareMode) === "ytd" ? "ytd" : "mtd";
+
+    const compareFromDate =
+      compareMode === "ytd"
+        ? getFinancialYearStart(reportDate)
+        : getMonthStart(reportDate);
+
+    const compareLabel = compareMode === "ytd" ? "YTD/FY" : "MTD";
+
+    const [periodWise, dateWise] = await Promise.all([
+      getOdrcModelWiseRange({
+        fromDate: compareFromDate,
+        toDate: reportDate,
+        branchId,
+        search,
+      }),
+      getOdrcModelWiseRange({
+        fromDate: reportDate,
+        toDate: reportDate,
+        branchId,
+        search,
+      }),
+    ]);
+
+    return res.json(
+      successResponse({
+        filters: {
+          reportDate,
+          branchId,
+          search,
+          compareMode,
+        },
+        comparison: {
+          label: compareLabel,
+          fromDate: compareFromDate,
+          toDate: reportDate,
+        },
+        periodWise,
+        dateWise,
+      })
+    );
+  } catch (error) {
+    console.error("getStockOdrcComparisonReport error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch ODRC comparison report",
       error: error.message,
     });
   }
