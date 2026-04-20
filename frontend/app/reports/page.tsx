@@ -59,6 +59,18 @@ type ReportCardProps = {
   accent?: string;
 };
 
+function formatLocalDate(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getFinancialYearStartLocal(date: Date) {
+  const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  return new Date(year, 3, 1);
+}
+
 function formatAmount(value?: number | string | null) {
   return `₹${Number(value || 0).toLocaleString("en-IN")}`;
 }
@@ -192,15 +204,17 @@ export default function ReportsDashboardPage() {
   const [pvssModels, setPvssModels] = useState<PurchaseVsSalesModel[]>([]);
   const [error, setError] = useState("");
 
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const mtdFrom = useMemo(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
-  }, []);
-  const ytdFrom = useMemo(() => {
-    const d = new Date();
-    return new Date(d.getFullYear(), 0, 1).toISOString().slice(0, 10);
-  }, []);
+const today = useMemo(() => formatLocalDate(new Date()), []);
+
+const mtdFrom = useMemo(() => {
+  const d = new Date();
+  return formatLocalDate(new Date(d.getFullYear(), d.getMonth(), 1));
+}, []);
+
+const ytdFrom = useMemo(() => {
+  const d = new Date();
+  return formatLocalDate(getFinancialYearStartLocal(d));
+}, []);
 
   useEffect(() => {
     setMounted(true);

@@ -51,6 +51,18 @@ type ApiResponse = {
 
 type RangeType = "TODAY" | "MTD" | "YTD" | "CUSTOM";
 
+function formatLocalDate(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getFinancialYearStartLocal(date: Date) {
+  const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  return new Date(year, 3, 1);
+}
+
 function formatAmount(value?: number | string | null) {
   return `₹${Number(value || 0).toLocaleString("en-IN")}`;
 }
@@ -64,7 +76,7 @@ function formatDateOnly(value?: string | null) {
 
 function getDefaultDates(range: RangeType) {
   const today = new Date();
-  const to = today.toISOString().slice(0, 10);
+  const to = formatLocalDate(today);
 
   if (range === "TODAY") {
     return { from: to, to };
@@ -73,15 +85,15 @@ function getDefaultDates(range: RangeType) {
   if (range === "MTD") {
     const first = new Date(today.getFullYear(), today.getMonth(), 1);
     return {
-      from: first.toISOString().slice(0, 10),
+      from: formatLocalDate(first),
       to,
     };
   }
 
   if (range === "YTD") {
-    const first = new Date(today.getFullYear(), 0, 1);
+    const first = getFinancialYearStartLocal(today);
     return {
-      from: first.toISOString().slice(0, 10),
+      from: formatLocalDate(first),
       to,
     };
   }

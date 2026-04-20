@@ -57,6 +57,13 @@ type DetailRow = {
   ageing_bucket: string;
 };
 
+function formatLocalDate(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function formatDateOnly(value?: string | null) {
   if (!value) return "-";
   const d = new Date(value);
@@ -395,11 +402,11 @@ export default function StockAgeingReportPage() {
   const [modelWise, setModelWise] = useState<ModelWiseRow[]>([]);
   const [rows, setRows] = useState<DetailRow[]>([]);
   const [filters, setFilters] = useState({
-    asOnDate: new Date().toISOString().slice(0, 10),
-    branchId: "",
-    search: "",
-    status: "in_stock",
-  });
+  asOnDate: formatLocalDate(new Date()),
+  branchId: "",
+  search: "",
+  status: "in_stock",
+});
 
   useEffect(() => {
     setGeneratedAt(new Date().toLocaleString("en-IN"));
@@ -526,18 +533,18 @@ export default function StockAgeingReportPage() {
     fetchReport();
   };
 
-  const handleReset = () => {
-    setFilters({
-      asOnDate: new Date().toISOString().slice(0, 10),
-      branchId: "",
-      search: "",
-      status: "in_stock",
-    });
+const handleReset = () => {
+  setFilters({
+    asOnDate: formatLocalDate(new Date()),
+    branchId: "",
+    search: "",
+    status: "in_stock",
+  });
 
-    setTimeout(() => {
-      window.location.href = "/reports/stock-ageing";
-    }, 0);
-  };
+  setTimeout(() => {
+    window.location.href = "/reports/stock-ageing";
+  }, 0);
+};
 
   const handlePrint = async () => {
     const includeDetailed = window.confirm(

@@ -42,6 +42,18 @@ type PurchaseSaleSnapshot = {
   saleAmount: number;
 };
 
+function formatLocalDate(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getFinancialYearStartLocal(date: Date) {
+  const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  return new Date(year, 3, 1);
+}
+
 function formatDateOnly(value?: string | null) {
   if (!value) return "-";
   const d = new Date(value);
@@ -310,21 +322,19 @@ function SimpleBarChart({
 
 function getDateWindow(mode: SnapshotMode) {
   const today = new Date();
-  const end = today.toISOString().slice(0, 10);
+  const end = formatLocalDate(today);
 
   if (mode === "today") {
     return { from: end, to: end, label: "Today" };
   }
 
   if (mode === "mtd") {
-    const from = new Date(today.getFullYear(), today.getMonth(), 1)
-      .toISOString()
-      .slice(0, 10);
+    const from = formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1));
     return { from, to: end, label: "MTD" };
   }
 
-  const from = new Date(today.getFullYear(), 0, 1).toISOString().slice(0, 10);
-  return { from, to: end, label: "YTD" };
+  const from = formatLocalDate(getFinancialYearStartLocal(today));
+  return { from, to: end, label: "YTD/FY" };
 }
 
 export default function OdrcReportPage() {
@@ -352,7 +362,7 @@ export default function OdrcReportPage() {
   });
 
   const [filters, setFilters] = useState({
-    reportDate: new Date().toISOString().slice(0, 10),
+ reportDate: formatLocalDate(new Date()),
     branchId: "",
     search: "",
   });
@@ -546,7 +556,7 @@ export default function OdrcReportPage() {
 
   const handleReset = () => {
     setFilters({
-      reportDate: new Date().toISOString().slice(0, 10),
+     reportDate: formatLocalDate(new Date()),
       branchId: "",
       search: "",
     });

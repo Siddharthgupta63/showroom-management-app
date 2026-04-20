@@ -94,6 +94,18 @@ function formatDateOnly(value?: string | null) {
   return d.toLocaleDateString("en-GB");
 }
 
+function formatLocalDate(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getFinancialYearStartLocal(date: Date) {
+  const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  return new Date(year, 3, 1); // 1 April
+}
+
 function SectionCard({
   title,
   children,
@@ -666,52 +678,37 @@ export default function SalesAnalyticsPage() {
     }, 0);
   };
 
-  const setQuickRange = (type: "today" | "mtd" | "ytd" | "fy") => {
-    const today = new Date();
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+ const setQuickRange = (type: "today" | "mtd" | "ytd" | "fy") => {
+  const today = new Date();
+  const todayStr = formatLocalDate(today);
 
-    if (type === "today") {
-      const value = fmt(today);
-      setFilters((prev) => ({
-        ...prev,
-        fromDate: value,
-        toDate: value,
-      }));
-      return;
-    }
-
-    if (type === "mtd") {
-      const from = new Date(today.getFullYear(), today.getMonth(), 1);
-      setFilters((prev) => ({
-        ...prev,
-        fromDate: fmt(from),
-        toDate: fmt(today),
-      }));
-      return;
-    }
-
-    if (type === "ytd") {
-      const from = new Date(today.getFullYear(), 0, 1);
-      setFilters((prev) => ({
-        ...prev,
-        fromDate: fmt(from),
-        toDate: fmt(today),
-      }));
-      return;
-    }
-
-    const fyStart =
-      today.getMonth() >= 3
-        ? new Date(today.getFullYear(), 3, 1)
-        : new Date(today.getFullYear() - 1, 3, 1);
-
+  if (type === "today") {
     setFilters((prev) => ({
       ...prev,
-      fromDate: fmt(fyStart),
-      toDate: fmt(today),
+      fromDate: todayStr,
+      toDate: todayStr,
     }));
-  };
+    return;
+  }
 
+  if (type === "mtd") {
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    setFilters((prev) => ({
+      ...prev,
+      fromDate: formatLocalDate(monthStart),
+      toDate: todayStr,
+    }));
+    return;
+  }
+
+  const fyStart = getFinancialYearStartLocal(today);
+
+  setFilters((prev) => ({
+    ...prev,
+    fromDate: formatLocalDate(fyStart),
+    toDate: todayStr,
+  }));
+};
   const handlePrintConfirm = async () => {
     setShowPrintOptions(false);
     await new Promise((resolve) => setTimeout(resolve, 350));

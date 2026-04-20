@@ -1587,3 +1587,38 @@ exports.exportStockAgeingReport = async (req, res) => {
     });
   }
 };
+
+
+exports.getDashboardSummary = async (req, res) => {
+  try {
+    const [stock] = await db.query(`
+      SELECT
+        SUM(CASE WHEN status_code = 'in_stock' THEN 1 ELSE 0 END) AS in_stock,
+        SUM(CASE WHEN status_code = 'sold' THEN 1 ELSE 0 END) AS sold
+      FROM vehicle_purchase_items
+    `);
+
+    const [sales] = await db.query(`
+      SELECT COUNT(*) AS total_sales
+      FROM sales
+      WHERE DATE(sale_date) = CURDATE()
+    `);
+
+    const [mtdSales] = await db.query(`
+      SELECT COUNT(*) AS mtd_sales
+      FROM sales
+      WHERE MONTH(sale_date) = MONTH(CURDATE())
+        AND YEAR(sale_date) = YEAR(CURDATE())
+    `);
+
+    res.json({
+      in_stock: stock[0].in_stock || 0,
+      sold: stock[0].sold || 0,
+      today_sales: sales[0].total_sales || 0,
+      mtd_sales: mtdSales[0].mtd_sales || 0,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Dashboard error" });
+  }
+};
